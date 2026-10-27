@@ -1,0 +1,90 @@
+# ------------------------------------------------------------------------------
+# BlueMeter - .NET / WPF / Visual Studio
+# ------------------------------------------------------------------------------
+
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]uild/
+artifacts/
+publish/
+*.binlog
+*.tmp
+*.log
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.rsuser
+*.DotSettings.user
+_ReSharper*/
+*.[Rr]e[Ss]harper
+.vscode/
+*.VC.db
+*.VC.opendb
+*.opendb
+*.sdf
+*.cachefile
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+*.iml
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+.nuget/
+.dotnet/
+project.lock.json
+project.fragment.lock.json
+
+# Test results and coverage
+[Tt]est[Rr]esult*/
+TestResults/
+coverage/
+coverage*.xml
+coverage*.json
+*.coverage
+*.coveragexml
+*.trx
+*.received.*
+
+# Runtime / logs
+logs/
+[Ll]og/
+[Ll]ogs/
+
+# MSBuild / scaffolding leftovers
+*.tlog
+*.lastbuildstate
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.obj
+
+# OS junk
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+._*
+
+# User secrets and local configuration
+secrets.json
+appsettings.Local.json
+*.local.json
