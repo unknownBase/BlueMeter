@@ -75,12 +75,16 @@ Runtime: Microsoft.WindowsDesktop.App 8.0.31
     <RootNamespace>BlueMeter</RootNamespace>
     <ApplicationIcon>Assets\BlueMeter.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="WPF-UI" Version="4.3.0" />
     <PackageReference Include="H.NotifyIcon.Wpf" Version="2.3.2" />
+    <PackageReference Include="WPF-UI" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\BlueMeter.ico" />
   </ItemGroup>
 
 </Project>
@@ -90,8 +94,8 @@ Runtime: Microsoft.WindowsDesktop.App 8.0.31
 
 - `TargetPlatformVersion=10.0.19041.0` 与 `SupportedOSPlatformVersion=10.0.17763.0` 同时存在是刻意为之：用较新的 SDK 投影，但声明最低运行系统为 1809。
 - 只能使用在 17763 上存在的 API。当前用到的配对选择器（10586）、GATT（15063）、`PresentationFormats`（15063）均满足；Mica 仅 Win11，WPF-UI 会运行时退化。
-- `ApplicationIcon` 指向的文件必须存在，否则构建失败（M1 先补图标）。
-- `app.manifest` 建议声明 Per-Monitor V2 DPI 与 Windows 10/11 兼容性。
+- `ApplicationIcon` 指向 `Assets/BlueMeter.ico`；该文件已随仓库提供，缺失会导致构建失败。
+- `app.manifest` 已声明 Per-Monitor V2 DPI 与 Windows 10/11 兼容性。
 
 `app.manifest` 参考：
 

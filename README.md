@@ -16,15 +16,15 @@ BlueMeter 是一个常驻 Windows 系统托盘的轻量桌面应用，用来汇�
 
 | 项目 | 状态 |
 | --- | --- |
-| 文档（README / 路线图 / 架构 / UI / 开发指南） | ✅ 已完成（`0.1.0-docs`） |
-| 工程配置与依赖 | ⏳ 待实施 |
-| 托盘与窗口生命周期 | ⏳ 待实施 |
-| BLE 电量读取 | ⏳ 待实施 |
-| 经典蓝牙电量读取 | ⏳ 待实施 |
-| Fluent 主窗口与列表 | ⏳ 待实施 |
-| 低电量通知与稳定性加固 | ⏳ 待实施 |
+| 文档（README / 路线图 / 架构 / UI / 开发指南 / 贡献指南） | ✅ 已完成（`0.1.0-docs`） |
+| 工程配置与依赖 | ✅ 已完成（`0.2.0`） |
+| 托盘与窗口生命周期 | ✅ 已完成（`0.2.0`） |
+| BLE 电量读取 | ⏳ 待实施（M2） |
+| 经典蓝牙电量读取 | ⏳ 待实施（M3） |
+| Fluent 主窗口与列表 | ⏳ 待实施（M4） |
+| 低电量通知与稳定性加固 | ⏳ 待实施（M3/M5） |
 
-> 仓库目前仍是 Visual Studio 生成的空 WPF 脚手架。功能实现顺序、验收标准见 [ROADMAP.md](ROADMAP.md)。在实现完成前，直接运行只会看到一个空白窗口。
+> 当前版本为 `0.2.0`：已完成 M1 工程配置、托盘、单实例、窗口生命周期、设置与日志骨架。运行后可看到托盘图标与占位主窗口；设备扫描与电量读取尚未接入，托盘菜单中的“立即刷新”暂为禁用占位。
 
 当前基线：
 
@@ -138,10 +138,10 @@ dotnet publish .\BlueMeter.csproj -c Release -r win-x64 --self-contained true
 | 操作 | 行为 |
 | --- | --- |
 | 左键单击托盘图标 | 显示并激活主窗口；若窗口最小化则先还原 |
-| 右键单击托盘图标 | 打开菜单：显示主窗口、立即刷新、退出 |
-| 关闭主窗口 | 取消关闭，隐藏窗口；扫描与托盘继续运行 |
+| 右键单击托盘图标 | 打开菜单：显示主窗口、立即刷新（M2 接入前禁用）、退出 |
+| 关闭主窗口 | 取消关闭，隐藏窗口；托盘继续运行 |
 | 最小化主窗口 | 窗口保留在任务栏；托盘图标始终可见 |
-| 托盘菜单“退出” | 设置退出标志，停止扫描、释放托盘与 GATT 资源，彻底结束进程 |
+| 托盘菜单“退出” | 设置退出标志，保存设置、释放托盘与后续 GATT 资源，彻底结束进程 |
 | 悬停托盘图标 | 显示一行摘要；完整设备列表在主窗口中 |
 
 托盘 ToolTip 受 Windows `NOTIFYICONDATA.szTip` 长度限制（约 127 字符），因此只显示摘要，不显示完整列表。
@@ -160,25 +160,36 @@ dotnet publish .\BlueMeter.csproj -c Release -r win-x64 --self-contained true
 
 ## 项目结构
 
-当前仓库：
+当前仓库（`0.2.0`）：
 
 ```text
 BlueMeter/
 ├─ BlueMeter.sln
 ├─ BlueMeter.csproj
-├─ App.xaml / App.xaml.cs
-├─ MainWindow.xaml / MainWindow.xaml.cs
+├─ App.xaml / App.xaml.cs              # 组合根：单实例、托盘、窗口、异常、退出
+├─ MainWindow.xaml / MainWindow.xaml.cs # FluentWindow + 关闭隐藏
 ├─ AssemblyInfo.cs
+├─ app.manifest                        # Per-Monitor V2 DPI / Win10+ 兼容性
+├─ Assets/
+│  └─ BlueMeter.ico                    # 16–256 多尺寸应用/托盘图标
+├─ Models/
+│  └─ AppSettings.cs
+├─ Services/
+│  ├─ AppLog.cs                        # 按天日志、7 天保留、地址脱敏
+│  ├─ SettingsService.cs               # JSON 原子读写、损坏回退
+│  └─ TrayIconService.cs               # TaskbarIcon、菜单、ToolTip、退出
 ├─ README.md
 ├─ ROADMAP.md
+├─ CONTRIBUTING.md
 ├─ CHANGELOG.md
+├─ LICENSE
 └─ docs/
    ├─ ARCHITECTURE.md
    ├─ UI-SPEC.md
    └─ DEVELOPMENT.md
 ```
 
-实现完成后的目标结构：
+目标结构（M2–M4 完成后）：
 
 ```text
 BlueMeter/

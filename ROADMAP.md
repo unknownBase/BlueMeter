@@ -1,6 +1,6 @@
 # BlueMeter Roadmap
 
-版本策略：SemVer。`0.x` 允许接口和 UI 调整；`1.0.0` 表示一期范围全部达到验收标准。当前文档基线为 `0.1.0-docs`。
+版本策略：SemVer。`0.x` 允许接口和 UI 调整；`1.0.0` 表示一期范围全部达到验收标准。文档基线为 `0.1.0-docs`，当前代码版本为 `0.2.0`。
 
 状态图例：✅ 完成 ｜ 🚧 进行中 ｜ ⏳ 未开始 ｜ ⛔ 暂缓
 
@@ -11,7 +11,7 @@
 | 里程碑 | 版本 | 主题 | 状态 | 粗略工作量 |
 | --- | --- | --- | --- | --- |
 | M0 | `0.1.0-docs` | 需求梳理与文档基线 | ✅ | 已完成 |
-| M1 | `0.2.0` | 工程配置、托盘、窗口生命周期 | ⏳ | 1–2 人日 |
+| M1 | `0.2.0` | 工程配置、托盘、窗口生命周期 | ✅ | 已完成 |
 | M2 | `0.3.0` | 设备发现与 BLE 电量读取 | ⏳ | 3–4 人日 |
 | M3 | `0.4.0` | 经典蓝牙电量、低电量通知、托盘摘要 | ⏳ | 1–2 人日 |
 | M4 | `0.5.0` | Fluent 主窗口、列表与设置 | ⏳ | 2–3 人日 |
@@ -39,46 +39,48 @@
 
 ---
 
-## M1 — 工程配置、托盘与窗口生命周期 ⏳
+## M1 — 工程配置、托盘与窗口生命周期 ✅
 
 **目标**：应用能作为托盘程序稳定运行：关闭隐藏、左键还原、右键退出、单实例、主题跟随。
 
+> `0.2.0` 已完成。设备扫描与“立即刷新”的真实行为属于 M2；托盘菜单中该项当前为禁用占位。
+
 ### 任务
 
-- [ ] **M1-1 工程配置**
+- [x] **M1-1 工程配置**
   - `TargetFramework=net8.0-windows10.0.19041.0`
   - `SupportedOSPlatformVersion=10.0.17763.0`
   - `OutputType=WinExe`、`UseWPF=true`、`Nullable=enable`、`ImplicitUsings=enable`
   - `ApplicationIcon=Assets\BlueMeter.ico`
   - 引入 `WPF-UI 4.3.0`、`H.NotifyIcon.Wpf 2.3.2`
   - 可选：`app.manifest` 声明 Per-Monitor V2 DPI 感知与 Windows 10/11 兼容性
-- [ ] **M1-2 应用图标**
+- [x] **M1-2 应用图标**
   - 制作多尺寸 `BlueMeter.ico`（16/20/24/32/48/256）
   - 作为 `Resource` 打包；托盘、窗口、可执行文件复用
-- [ ] **M1-3 App 组合根**
+- [x] **M1-3 App 组合根**
   - 移除 `StartupUri`，改为手动创建窗口与服务
   - `ShutdownMode=OnExplicitShutdown`
   - 注册 `DispatcherUnhandledException`、`AppDomain.UnhandledException`、`TaskScheduler.UnobservedTaskException`
   - `SessionEnding` 时允许退出，不弹“隐藏到托盘”
-- [ ] **M1-4 主题**
+- [x] **M1-4 主题**
   - `App.xaml` 合并 `ui:ThemesDictionary`、`ui:ControlsDictionary`
   - 主窗口构造时 `SystemThemeWatcher.Watch(this)`
   - 明暗主题、强调色、背景材质运行时跟随
-- [ ] **M1-5 托盘服务**
+- [x] **M1-5 托盘服务**
   - 封装 `TrayIconService`，持有唯一的 `H.NotifyIcon.TaskbarIcon`
   - `TrayLeftMouseDown` → 显示/还原/激活
   - 右键菜单：显示主窗口、立即刷新（占位）、退出
   - `ToolTipText` 动态更新，长度 ≤ 120 字符
   - 退出时 `Dispose()` 托盘图标
-- [ ] **M1-6 窗口生命周期**
+- [x] **M1-6 窗口生命周期**
   - `OnClosing` 取消关闭并 `Hide()`，除非已请求退出
   - “退出”设置退出标志 → 停止服务 → 释放托盘 → `Application.Current.Shutdown()`
   - 最小化时确保托盘图标可见；主窗口保留在任务栏
   - `StartMinimized` 为 true 时不显示主窗口，只创建隐藏实例
-- [ ] **M1-7 单实例**
+- [x] **M1-7 单实例**
   - 命名 `Mutex`（`Local\BlueMeter.SingleInstance`）
   - 第二实例退出；通过 `WM_COPYDATA` 或命名管道唤醒已有窗口（可先只退出）
-- [ ] **M1-8 设置与日志骨架**
+- [x] **M1-8 设置与日志骨架**
   - `%LOCALAPPDATA%\BlueMeter\settings.json` 读写、原子替换、损坏回退默认值
   - 日志：`%LOCALAPPDATA%\BlueMeter\logs\bluemeter-YYYYMMDD.log`，按天滚动、保留 7 天
   - 日志中蓝牙地址做掩码
@@ -91,6 +93,8 @@
 4. 重复双击 exe 不产生第二个托盘图标。
 5. 系统切换明暗主题/强调色后，窗口无需重启即可跟随。
 6. 在 Win10 1809+ 与 Win11 上均不崩溃；Mica 不可用时自动退化。
+
+> 验收状态：Windows 11 实机已验证启动、托盘、关闭隐藏、单实例、启动最小化、设置损坏回退与日志写入；Win10 1809 兼容性待对应实机复核。
 
 ---
 

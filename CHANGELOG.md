@@ -6,12 +6,36 @@
 
 ### Added
 
-- 采用仓库已有的 MIT 许可，补齐 README 许可说明与链接。
-- 新增 `CONTRIBUTING.md`：单行 Conventional Commits 规范（`type: 中文简述`）、type 枚举、示例与提交前检查。
-- 待实现：托盘常驻与窗口生命周期（M1）
 - 待实现：蓝牙设备枚举与 BLE 电量读取（M2）
 - 待实现：经典蓝牙电量、低电量通知与托盘摘要（M3）
 - 待实现：Fluent 主窗口、设备列表与设置（M4）
+
+## [0.2.0] - 2026-10-27
+
+### Added
+
+- 采用仓库已有的 MIT 许可，补齐 README 许可说明与链接。
+- 新增 `CONTRIBUTING.md`：单行 Conventional Commits 规范（`type: 中文简述`）、type 枚举、示例与提交前检查。
+- M1 工程配置：`net8.0-windows10.0.19041.0`、最低 Windows 10 1809、WPF-UI `4.3.0`、H.NotifyIcon.Wpf `2.3.2`。
+- 多尺寸应用图标 `Assets/BlueMeter.ico`（16/20/24/32/48/64/256），资源打包并复用于窗口、托盘和 exe。
+- `app.manifest`：Per-Monitor V2 DPI、Windows 10/11 兼容性声明。
+- `TrayIconService`：托盘图标、左键显示/还原、右键菜单（显示、立即刷新占位、退出）、ToolTip 截断。
+- 窗口生命周期：关闭隐藏到托盘；托盘“退出”统一释放托盘并结束进程；支持启动时最小化到托盘。
+- 单实例：`Local\BlueMeter.SingleInstance` 命名互斥体，第二实例静默退出。
+- `SettingsService`：`%LOCALAPPDATA%\BlueMeter\settings.json` 原子读写、范围校验、损坏文件备份与默认值回退。
+- `AppLog`：`%LOCALAPPDATA%\BlueMeter\logs\bluemeter-yyyyMMdd.log`，按天、5 MB 滚动、保留 7 天、蓝牙地址掩码。
+- 全局异常处理：Dispatcher、AppDomain、未观察任务异常；注销/关机时直接退出。
+- 主窗口 Fluent 外壳：`ui:FluentWindow`、Mica、圆角、`ui:TitleBar`、系统主题跟随。
+
+### Changed
+
+- 移除 `StartupUri`，由 `App.OnStartup` 手动创建单实例、设置、日志、托盘与窗口。
+- README 更新当前状态、项目结构与使用说明。
+
+### Notes
+
+- 设备扫描、BLE/经典蓝牙电量读取尚未接入；托盘“立即刷新”为禁用占位。
+- 版本提升至 `0.2.0`；M1 验收中的 Win10 1809 与 Win11 兼容性需在对应实机完成最终手测。
 
 ## [0.1.0-docs] - 2026-10-27
 
