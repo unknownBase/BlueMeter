@@ -1,6 +1,6 @@
 # BlueMeter Roadmap
 
-版本策略：SemVer。`0.x` 允许接口和 UI 调整；`1.0.0` 表示一期范围全部达到验收标准。文档基线为 `0.1.0-docs`，当前代码版本为 `0.3.0`。
+版本策略：SemVer。`0.x` 允许接口和 UI 调整；`1.0.0` 表示一期范围全部达到验收标准。文档基线为 `0.1.0-docs`，当前代码版本为 `0.3.1`。
 
 状态图例：✅ 完成 ｜ 🚧 进行中 ｜ ⏳ 未开始 ｜ ⛔ 暂缓
 
@@ -13,6 +13,7 @@
 | M0 | `0.1.0-docs` | 需求梳理与文档基线 | ✅ | 已完成 |
 | M1 | `0.2.0` | 工程配置、托盘、窗口生命周期 | ✅ | 已完成 |
 | M2 | `0.3.0` | 设备发现与 BLE 电量读取 | ✅ | 已完成 |
+| M2.1 | `0.3.1` | Rapoo 2.4G 只读电量 | ✅ | 已完成 |
 | M3 | `0.4.0` | 经典蓝牙电量、低电量通知、托盘摘要 | ⏳ | 1–2 人日 |
 | M4 | `0.5.0` | Fluent 主窗口、列表与设置 | ⏳ | 2–3 人日 |
 | M5 | `0.9.0` | 稳定性、性能、兼容性加固 | ⏳ | 2–3 人日 |
@@ -105,9 +106,9 @@
 ### 任务
 
 - [x] **M2-1 领域模型**
-  - `BluetoothDeviceKind`（Ble / Classic）
+  - `DeviceTransportKind`（`BluetoothLe` / `BluetoothClassic` / `Hid24G`）
   - `BatteryReadStatus`（Unknown / Reading / Ok / Stale / Unavailable / NotSupported）
-  - `DeviceBatteryState`：Id、Address、Name、Kind、BatteryPercent、LastSuccessAt、LastAttemptAt、IsConnected、Status、SupportsNotifications、ChargingText、LowBatteryAlerted
+  - `DeviceBatteryState`：Id、Address、Name、Transport、BatteryPercent、LastSuccessAt、LastAttemptAt、IsConnected、Status、SupportsNotifications、ChargingText、LowBatteryAlerted；HID 设备额外保存 VendorId/ProductId/InterfacePath/ReceiverId/VendorName
 - [x] **M2-2 设备枚举**
   - BLE：`DeviceInformation.FindAllAsync(BluetoothLEDevice.GetDeviceSelectorFromPairingState(true), keys)`
   - 经典：`DeviceInformation.FindAllAsync(BluetoothDevice.GetDeviceSelectorFromPairingState(true), keys)`
@@ -162,6 +163,48 @@
 
 ---
 
+## M2.1 — Rapoo 2.4G 只读电量 ✅
+
+**目标**：在不把 2.4G 当作蓝牙、不写入设备配置的前提下，读取已确认的 Rapoo 2.4G 接收器电量。
+
+> `0.3.1` 已完成。实现依据为官方 Rapoo 应用流量与独立只读探测；当前只确认 `VID_24AE&PID_1861` 的 `MI_01/COL05` 接口。
+
+### 任务
+
+- [x] **M2.1-1 传输与身份模型**
+  - `DeviceTransportKind.Hid24G` 与 BLE/经典并列，不合并为蓝牙地址
+  - `Hid24GDeviceInfo`：VID、PID、HID 接口路径、接收器身份、产品名、厂商名、input report 长度
+  - 快照与状态携带 2.4G 身份字段，UI 显示“2.4G 接收器”
+- [x] **M2.1-2 只读 HID 枚举**
+  - 使用 SetupAPI 枚举 HID 接口，过滤 `vid_24ae&pid_1861`、`&mi_01&` 与 `&col05#`
+  - 用 `HidD_GetAttributes`、`HidD_GetPreparsedData` / `HidP_GetCaps` 校验 `0xFF00/0x0002` 与 7 字节 input report
+  - 仅以 `GENERIC_READ` 打开，不导入/调用任何写 API
+- [x] **M2.1-3 厂商电量探针**
+  - `HidD_GetInputReport(0xBB)` 只读报告，兼容 `B0 ... 46 00`（电量索引 5）与带 `0xBB` 前缀（索引 6）
+  - 校验 0–100；失败保留旧值并标记 `Stale`/`Unavailable`
+  - 不使用 `col04`/`0xBA` 配置通道，不发送 output/feature 报告
+- [x] **M2.1-4 调度与状态合并**
+  - 无蓝牙适配器时仍继续枚举/读取 2.4G
+  - 2.4G 枚举失败时保留旧状态，不误判离线；连续两轮缺失才移除
+  - 2.4G 读取优先于 BLE 轮次，避免被 BLE 单轮预算挤掉
+- [x] **M2.1-5 UI 与文档**
+  - 主窗口摘要分别统计 BLE / 经典 / 2.4G
+  - 托盘摘要包含 2.4G 电量；无蓝牙适配器但 2.4G 可用时不被全局状态覆盖
+  - README / ARCHITECTURE / UI-SPEC / DEVELOPMENT / CHANGELOG 同步
+
+### 验收
+
+1. Rapoo 接收器可见，显示为“2.4G 接收器”，不显示为 BLE/经典蓝牙。
+2. 官方 Rapoo 应用显示 70% 时，BlueMeter 读取到 70%（允许同一报告周期的正常波动）。
+3. 读取过程只调用 `HidD_GetInputReport`，不发送 output/config 报告，不修改 DPI/灯光/按键。
+4. 拔掉接收器后下一轮标记不可达，连续两轮后移除；重新插入后恢复。
+5. 无蓝牙适配器的机器上，2.4G 读取仍正常工作。
+6. LINGBAO K98 不出现伪造的 2.4G 电量；未确认协议设备保持不支持。
+
+> 验收状态：当前实机已通过 Rapoo `24AE:1861` 读取 70%，且 `dotnet build -c Release` 零警告零错误。BLE 真实 GATT、睡眠唤醒仍受无蓝牙适配器环境限制。
+
+---
+
 ## M3 — 经典蓝牙、低电量通知与托盘摘要 ⏳
 
 **目标**：补齐系统属性可读的经典设备；低电量只提醒一次；托盘摘要准确。
@@ -188,7 +231,7 @@
 - [ ] **M3-4 托盘 ToolTip**
   - 有有效电量：单设备 `鼠标 15%`；多设备 `3 个设备，最低 15%`
   - 只有旧值：`鼠标 15%（暂时不可达）`
-  - 无设备：`BlueMeter · 未发现已配对设备`
+  - 无设备：`BlueMeter · 未发现蓝牙或 2.4G 设备`
   - 扫描中且无数据：`BlueMeter · 正在扫描…`
   - 超长名称截断，整串 ≤ 120 字符
 - [ ] **M3-5 托盘菜单联动**
@@ -229,8 +272,8 @@
   - 颜色：`≤阈值` 危险色；`阈值 < x < 阈值 + 20` 警告色；`≥阈值 + 20` 强调色/成功色
   - 动画 150ms，尊重“减少动画”设置
 - [ ] **M4-4 页面状态**
-  - 首次加载：进度环 + “正在扫描已配对设备…”
-  - 空状态：图标 + “未发现已配对的蓝牙设备” + 配对指引
+  - 首次加载：进度环 + “正在扫描蓝牙与 2.4G 设备…”
+  - 空状态：图标 + “未发现蓝牙或 2.4G 设备” + 配对/插入指引
   - 全部不可达：提示检查蓝牙开关/设备电源，而非空白
   - 扫描失败：非阻塞 `InfoBar` + 重试按钮
 - [ ] **M4-5 头部与底部**
@@ -339,6 +382,8 @@
 | --- | --- | --- | --- |
 | 经典蓝牙电量属性在多数设备上不可用 | 高 | 中 | 明确显示“不支持”；二期 RFCOMM；不承诺全设备覆盖 |
 | BLE 设备休眠/被厂商软件占用导致读取失败 | 高 | 中 | 超时、保留旧值、状态标注；串行低频；不自动重试风暴 |
+| Rapoo 2.4G 协议仅覆盖已确认接收器 | 高 | 中 | 只匹配 `24AE:1861/col05`；不猜测 LINGBAO 等设备；文档明确不支持范围 |
+| 厂商应用独占 HID 句柄 | 中 | 低 | 只读共享打开；失败标 `Unavailable`，下轮重试；提示关闭厂商软件 |
 | GATT 连接引发额外耗电 | 中 | 中 | 默认 45 秒轮询；通知优先；单轮预算；后续可加“仅充电时高频” |
 | H.NotifyIcon 与 WPF-UI 版本升级破坏兼容 | 中 | 中 | 锁定 2.3.2 / 4.3.0；升级前跑手测矩阵 |
 | .NET 8 于 2026-11 结束支持 | 高 | 中 | 1.0 后评估 .NET 10；届时 H.NotifyIcon 可升 2.4.x |

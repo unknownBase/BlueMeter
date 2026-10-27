@@ -14,7 +14,7 @@ public partial class App : Application
     private Mutex? _singleInstanceMutex;
     private bool _ownsSingleInstanceMutex;
     private SettingsService? _settingsService;
-    private IBluetoothBatteryService? _bluetoothBatteryService;
+    private IDeviceBatteryService? _deviceBatteryService;
     private TrayIconService? _trayIconService;
     private MainWindow? _mainWindow;
     private CancellationTokenSource? _appCts;
@@ -57,7 +57,7 @@ public partial class App : Application
         try
         {
             _appCts?.Cancel();
-            _bluetoothBatteryService?.Dispose();
+            _deviceBatteryService?.Dispose();
             _trayIconService?.Dispose();
             _settingsService?.Save();
             AppLog.Info("BlueMeter 已退出", "App");
@@ -80,20 +80,20 @@ public partial class App : Application
         _settingsService = new SettingsService();
         _appCts = new CancellationTokenSource();
 
-        _bluetoothBatteryService = new BluetoothBatteryService(_settingsService);
-        _bluetoothBatteryService.DevicesUpdated += OnDevicesUpdated;
-        _bluetoothBatteryService.LowBatteryDetected += OnLowBatteryDetected;
-        _bluetoothBatteryService.StatusChanged += OnBluetoothStatusChanged;
+        _deviceBatteryService = new DeviceBatteryService(_settingsService);
+        _deviceBatteryService.DevicesUpdated += OnDevicesUpdated;
+        _deviceBatteryService.LowBatteryDetected += OnLowBatteryDetected;
+        _deviceBatteryService.StatusChanged += OnDeviceStatusChanged;
 
         _trayIconService = new TrayIconService();
         _trayIconService.ShowRequested += OnShowRequested;
         _trayIconService.ExitRequested += OnExitRequested;
         _trayIconService.RefreshRequested += OnRefreshRequested;
-        _trayIconService.SetToolTip("BlueMeter · 正在扫描已配对设备…");
+        _trayIconService.SetToolTip("BlueMeter · 正在扫描蓝牙与 2.4G 设备…");
 
         _mainWindow = new MainWindow();
         _mainWindow.RefreshRequested += OnRefreshRequested;
-        _mainWindow.SetGlobalStatus("正在读取已配对设备…");
+        _mainWindow.SetGlobalStatus("正在读取已配对设备与 2.4G 接收器…");
 
         if (_settingsService.Current.StartMinimized)
         {
@@ -104,7 +104,7 @@ public partial class App : Application
             _mainWindow.Show();
         }
 
-        _ = _bluetoothBatteryService.StartAsync(_appCts.Token);
+        _ = _deviceBatteryService.StartAsync(_appCts.Token);
 
         AppLog.Info("托盘、窗口、设置与设备服务初始化完成", "App");
     }
@@ -149,7 +149,7 @@ public partial class App : Application
 
     private async void OnRefreshRequested(object? sender, EventArgs e)
     {
-        if (_bluetoothBatteryService is null ||
+        if (_deviceBatteryService is null ||
             _appCts is null ||
             Volatile.Read(ref _exitRequested) != 0)
         {
@@ -161,7 +161,7 @@ public partial class App : Application
 
         try
         {
-            await _bluetoothBatteryService.RefreshAsync(manual: true, _appCts.Token);
+            await _deviceBatteryService.RefreshAsync(manual: true, _appCts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -185,7 +185,12 @@ public partial class App : Application
         var threshold = _settingsService?.Current.LowBatteryThreshold ?? 20;
         _mainWindow?.QueueDevicesUpdate(snapshots, threshold);
 
-        if (_bluetoothBatteryService?.Status is { State: BluetoothServiceState.NoAdapter or BluetoothServiceState.BluetoothOff } serviceStatus)
+        var hasHid24G = snapshots.Any(
+            snapshot => snapshot.Transport == DeviceTransportKind.Hid24G);
+
+        if (!hasHid24G &&
+            _deviceBatteryService?.Status is
+                { State: DeviceServiceState.NoAdapter or DeviceServiceState.BluetoothOff } serviceStatus)
         {
             _trayIconService?.SetToolTip($"BlueMeter · {serviceStatus.Message}");
             return;
@@ -194,17 +199,22 @@ public partial class App : Application
         _trayIconService?.SetToolTip(BuildTrayToolTip(snapshots));
     }
 
-    private void OnBluetoothStatusChanged(
+    private void OnDeviceStatusChanged(
         object? sender,
-        BluetoothServiceStatus status)
+        DeviceServiceStatus status)
     {
         _mainWindow?.SetGlobalStatus(status.Message);
 
-        if (status.State is BluetoothServiceState.NoAdapter
-            or BluetoothServiceState.BluetoothOff
-            or BluetoothServiceState.Error)
+        if (status.State is DeviceServiceState.NoAdapter
+            or DeviceServiceState.BluetoothOff
+            or DeviceServiceState.Error)
         {
-            _trayIconService?.SetToolTip($"BlueMeter · {status.Message}");
+            var hasHid24G = _deviceBatteryService?.Current.Any(
+                snapshot => snapshot.Transport == DeviceTransportKind.Hid24G) == true;
+            if (!hasHid24G)
+            {
+                _trayIconService?.SetToolTip($"BlueMeter · {status.Message}");
+            }
         }
     }
 
@@ -222,7 +232,7 @@ public partial class App : Application
     {
         if (snapshots.Count == 0)
         {
-            return "BlueMeter · 未发现已配对设备";
+            return "BlueMeter · 未发现蓝牙或 2.4G 设备";
         }
 
         var withBattery = snapshots
@@ -294,9 +304,9 @@ public partial class App : Application
         {
             _appCts?.Cancel();
 
-            if (_bluetoothBatteryService is not null)
+            if (_deviceBatteryService is not null)
             {
-                var stopTask = _bluetoothBatteryService.StopAsync();
+                var stopTask = _deviceBatteryService.StopAsync();
                 var completed = await Task.WhenAny(
                     stopTask,
                     Task.Delay(TimeSpan.FromSeconds(3)));
@@ -315,7 +325,7 @@ public partial class App : Application
                 else
                 {
                     AppLog.Warn("设备服务停止超时，执行强制释放", "App");
-                    _bluetoothBatteryService.Dispose();
+                    _deviceBatteryService.Dispose();
                 }
             }
 

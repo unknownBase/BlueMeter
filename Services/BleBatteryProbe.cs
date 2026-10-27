@@ -8,7 +8,7 @@ namespace BlueMeter.Services;
 
 /// <summary>
 /// 负责单台 BLE 设备的 GATT 电量读取与通知订阅。
-/// 同一时刻由 <see cref="BluetoothBatteryService"/> 串行调用，避免 GATT 操作互相抢占。
+/// 同一时刻由 <see cref="DeviceBatteryService"/> 串行调用，避免 GATT 操作互相抢占。
 /// </summary>
 public sealed class BleBatteryProbe : IDisposable
 {

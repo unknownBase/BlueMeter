@@ -150,7 +150,7 @@ public sealed class TrayIconService : IDisposable
         var refreshItem = new MenuItem
         {
             Header = "立即刷新",
-            ToolTip = "扫描已配对设备并读取 BLE 电量",
+            ToolTip = "扫描蓝牙与 2.4G 设备并读取电量",
         };
         refreshItem.Click += (_, _) =>
         {

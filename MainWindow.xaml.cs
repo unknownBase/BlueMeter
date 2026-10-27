@@ -145,12 +145,17 @@ public partial class MainWindow : FluentWindow
             .Select(snapshot => new DeviceItemViewModel(snapshot, lowBatteryThreshold))
             .ToList();
 
-        var bleCount = snapshots.Count(snapshot => snapshot.Kind == BluetoothDeviceKind.Ble);
-        var classicCount = snapshots.Count - bleCount;
+        var bleCount = snapshots.Count(
+            snapshot => snapshot.Transport == DeviceTransportKind.BluetoothLe);
+        var classicCount = snapshots.Count(
+            snapshot => snapshot.Transport == DeviceTransportKind.BluetoothClassic);
+        var hid24GCount = snapshots.Count(
+            snapshot => snapshot.Transport == DeviceTransportKind.Hid24G);
 
         SummaryText.Text = snapshots.Count == 0
-            ? "尚未发现已配对设备，稍后会自动重试"
-            : $"已发现 {snapshots.Count} 台设备 · BLE {bleCount} · 经典蓝牙 {classicCount}";
+            ? "尚未发现蓝牙或 2.4G 设备，稍后会自动重试"
+            : $"已发现 {snapshots.Count} 台设备 · BLE {bleCount} · " +
+              $"经典蓝牙 {classicCount} · 2.4G {hid24GCount}";
 
         EmptyStateText.Visibility = snapshots.Count == 0
             ? Visibility.Visible

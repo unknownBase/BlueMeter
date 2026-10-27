@@ -41,7 +41,7 @@
                 <TextBlock x:Name="SummaryText"
                            Margin="0,4,0,0"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                           Text="等待已配对设备扫描"
+                           Text="等待蓝牙或 2.4G 设备扫描"
                            TextWrapping="Wrap" />
             </StackPanel>
 
@@ -89,7 +89,7 @@
                                HorizontalAlignment="Center"
                                VerticalAlignment="Center"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                               Text="尚未发现已配对设备"
+                               Text="尚未发现蓝牙或 2.4G 设备"
                                TextAlignment="Center"
                                TextWrapping="Wrap"
                                Visibility="Collapsed" />

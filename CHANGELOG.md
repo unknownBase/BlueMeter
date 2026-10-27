@@ -9,6 +9,31 @@
 - 待实现：经典蓝牙电量、低电量通知与托盘摘要（M3）
 - 待实现：Fluent 主窗口、完整设备列表与设置（M4）
 
+## [0.3.1] - 2026-10-27
+
+### Added
+
+- Rapoo 2.4G 只读电量支持：`VID_24AE&PID_1861` 的 `MI_01/COL05` HID 接口，`HidD_GetInputReport(0xBB)` 读取电量。
+- 新增独立的 `Hid24GDeviceInfo` 身份模型与 `DeviceTransportKind.Hid24G`，UI 明确显示“2.4G 接收器”，不与 BLE/经典蓝牙合并。
+- 新增 `HidInterop`（SetupAPI/HID 只读 P/Invoke）、`Rapoo24GDeviceEnumerator`、`Rapoo24GProbe`。
+- 无蓝牙适配器时继续读取 2.4G 接收器；2.4G 枚举失败保留旧状态，连续两轮缺失才移除。
+- 主窗口摘要分别统计 BLE / 经典蓝牙 / 2.4G；托盘摘要纳入 2.4G 电量。
+- 文档记录 Rapoo 协议事实、只读边界、LINGBAO K98 不支持与厂商应用独占风险。
+
+### Changed
+
+- `BluetoothDeviceKind` → `DeviceTransportKind`（`BluetoothLe` / `BluetoothClassic` / `Hid24G`）。
+- `BluetoothBatteryService` → `DeviceBatteryService`；`IBluetoothBatteryService` → `IDeviceBatteryService`。
+- `BluetoothServiceStatus` / `BluetoothServiceState` → `DeviceServiceStatus` / `DeviceServiceState`。
+- 版本提升至 `0.3.1`。
+
+### Notes
+
+- 2.4G 支持严格限定为 Rapoo `24AE:1861` 的已确认协议；不承诺通用 2.4G/USB 接收器。
+- 不向 `col04`/`0xBA` 配置通道发送任何报告，不修改 DPI、灯光、按键或设备设置。
+- LINGBAO K98 的厂商应用未暴露电量协议，保持不支持，不伪造读数。
+- 当前实机已验证 Rapoo 接收器读取 70%；BLE 真实 GATT 读取仍受开发机无蓝牙适配器限制。
+
 ## [0.3.0] - 2026-10-27
 
 ### Added

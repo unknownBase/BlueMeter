@@ -9,10 +9,10 @@
 ### 目标
 
 - 常驻托盘，关闭主窗口不退出。
-- 汇总本机**已配对** BLE 与经典蓝牙设备的电量。
+- 汇总本机**已配对** BLE/经典蓝牙设备，以及已确认的 Rapoo 2.4G HID 接收器设备的电量。
 - 设备不稳定（休眠、走远、关机、被独占）时保持进程稳定，保留上次成功值并诚实标注。
 - Fluent UI 跟随系统主题、强调色与背景材质。
-- 低频、串行、可控的蓝牙访问，避免连接风暴与额外耗电。
+- 低频、串行、可控的蓝牙与 HID 访问，避免连接风暴与额外耗电。
 
 ### 硬约束
 
@@ -20,6 +20,7 @@
 - WPF-UI `4.3.0`；H.NotifyIcon.Wpf `2.3.2`；不使用 WinForms `NotifyIcon`。
 - 一期不实现经典蓝牙 RFCOMM `IPHONEACCEV`。
 - 不引入第二套 UI 框架或额外的蓝牙封装库。
+- 2.4G 支持仅限已确认的 Rapoo `24AE:1861/col05` 只读报告；不发送 output/config 报告，不承诺通用 2.4G/USB 接收器。
 
 ---
 
@@ -29,20 +30,22 @@
 ┌──────────────────────────────────────────────────────────────────┐
 │ Windows Shell                                                    │
 │  ├─ 通知区域（托盘图标、ToolTip、气泡通知）                       │
-│  └─ 设置 → 蓝牙和设备（配对关系）                                 │
+│  ├─ 设置 → 蓝牙和设备（配对关系）                                 │
+│  └─ HID 设备接口（Rapoo 2.4G 接收器）                             │
 └───────────────▲───────────────────────────────▲──────────────────┘
-                │ Shell_NotifyIcon             │ 配对设备属性
+                │ Shell_NotifyIcon             │ 配对属性 / HID 接口
 ┌───────────────┴───────────────────────────────┴──────────────────┐
 │ BlueMeter.exe                                                    │
 │  ├─ WPF UI（FluentWindow / 设备列表 / 设置）                      │
 │  ├─ 托盘服务（H.NotifyIcon.TaskbarIcon）                          │
-│  └─ 电量服务（WinRT 枚举 + GATT / 设备属性）                      │
+│  └─ 设备服务（WinRT 枚举 + GATT / 设备属性 + HID 只读报告）       │
 └───────────────▲───────────────────────────────▲──────────────────┘
-                │ WinRT                          │ 设备属性
+                │ WinRT / SetupAPI              │ 设备属性 / HID report
 ┌───────────────┴───────────────────────────────┴──────────────────┐
-│ Windows Bluetooth Stack                                          │
+│ Windows 设备栈                                                   │
 │  ├─ BLE：GATT 0x180F / 0x2A19 / 0x2904 / CCCD                    │
-│  └─ BR/EDR：系统设备属性 System.Devices.BatteryLife              │
+│  ├─ BR/EDR：系统设备属性 System.Devices.BatteryLife              │
+│  └─ 2.4G：Rapoo 24AE:1861/col05 → HidD_GetInputReport(0xBB)      │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -58,19 +61,20 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 │  App.xaml.cs（组合根）                                                 │
 │    ├─ 单实例 Mutex                                                     │
 │    ├─ SettingsService / AppLog                                         │
-│    ├─ BluetoothBatteryService ──────────────┐                          │
+│    ├─ DeviceBatteryService ──────────────┐                          │
 │    ├─ TrayIconService ── TaskbarIcon        │                          │
-│    └─ MainWindow ── MainViewModel ── DeviceItemViewModel[]             │
+│    └─ MainWindow ── DeviceItemViewModel[]                            │
 │                         ▲                   │                          │
 │                         │ Dispatcher 编组   │ DevicesUpdated           │
 └─────────────────────────┼───────────────────┼──────────────────────────┘
                           │                   │
 ┌─────────────────────────┴───────────────────▼──────────────────────────┐
 │ 后台线程 / 线程池                                                      │
-│  BluetoothBatteryService（单轮循环、SemaphoreSlim 串行）               │
-│    ├─ 设备枚举：BLE AQS + Classic AQS + 地址去重                       │
+│  DeviceBatteryService（单轮循环、SemaphoreSlim 串行）                  │
+│    ├─ 蓝牙枚举：BLE AQS + Classic AQS + 地址去重                       │
+│    ├─ 2.4G 枚举：SetupAPI + HID caps（Rapoo 24AE:1861/col05）          │
 │    ├─ BleBatteryProbe：GATT 读取、CCCD 订阅、ValueChanged              │
-│    ├─ ClassicBatteryProbe：System.Devices.* 属性                      │
+│    ├─ Rapoo24GProbe：HidD_GetInputReport(0xBB)，只读                   │
 │    └─ 状态仓库：LastKnownBattery / LastSuccessAt / AlertLatch          │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -83,13 +87,16 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 | `TrayIconService` | 创建/释放 `TaskbarIcon`、菜单、左键还原、ToolTip、气泡 | 电量读取 |
 | `MainWindow` | Fluent 外壳、关闭隐藏、最小化策略 | 枚举设备 |
 | `MainViewModel` | 设备集合、排序、汇总、命令、设置绑定 | 直接调用 WinRT |
-| `BluetoothBatteryService` | 枚举、分类、去重、调度、状态合并、事件 | 窗口/托盘 UI |
+| `DeviceBatteryService` | 蓝牙与 2.4G 枚举、去重、调度、状态合并、事件 | 窗口/托盘 UI |
 | `BleBatteryProbe` | 单台 BLE 设备的 GATT 读取与通知订阅 | 全局调度 |
 | `ClassicBatteryProbe` | 单台经典设备的系统属性读取 | GATT |
+| `Rapoo24GDeviceEnumerator` | 枚举 Rapoo 2.4G `24AE:1861` 的 `MI_01/COL05` HID 接口、校验 caps | 读取电量 |
+| `Rapoo24GProbe` | `HidD_GetInputReport(0xBB)` 只读电量解析 | 发送配置/输出报告 |
+| `HidInterop` | SetupAPI/HID 只读 P/Invoke、路径与字符串读取 | 写设备 |
 | `SettingsService` | JSON 读写、默认值、校验、变更事件 | UI |
 | `AppLog` | 文件日志、滚动、脱敏 | 业务判断 |
 
-> 当前 `0.3.0`（M2）已实现 `BluetoothBatteryService`、`BleBatteryProbe` 与 M2 领域模型；主窗口暂用轻量预览列表，`MainViewModel`、`ClassicBatteryProbe`、`BatteryBar` 等留到 M3/M4。
+> 当前 `0.3.1` 已实现 `DeviceBatteryService`、`BleBatteryProbe`、`Rapoo24GDeviceEnumerator`、`Rapoo24GProbe` 与 M2 领域模型；主窗口暂用轻量预览列表，`MainViewModel`、`ClassicBatteryProbe`、`BatteryBar` 等留到 M3/M4。
 
 ---
 
@@ -100,17 +107,21 @@ BlueMeter/
 ├─ App.xaml(.cs)                 namespace BlueMeter
 ├─ MainWindow.xaml(.cs)          namespace BlueMeter
 ├─ Models/                       namespace BlueMeter.Models
-│  ├─ BluetoothDeviceKind.cs
+│  ├─ DeviceTransportKind.cs
+│  ├─ Hid24GDeviceInfo.cs
+│  ├─ DeviceServiceStatus.cs
 │  ├─ BatteryReadStatus.cs
 │  ├─ DeviceBatteryState.cs
+│  ├─ DeviceBatterySnapshot.cs
 │  ├─ BatteryProbeResult.cs
 │  └─ AppSettings.cs
 ├─ Services/                     namespace BlueMeter.Services
-│  ├─ IBluetoothBatteryService.cs
-│  ├─ BluetoothBatteryService.cs
-│  ├─ IBatteryProbe.cs
+│  ├─ IDeviceBatteryService.cs
+│  ├─ DeviceBatteryService.cs
 │  ├─ BleBatteryProbe.cs
-│  ├─ ClassicBatteryProbe.cs
+│  ├─ HidInterop.cs
+│  ├─ Rapoo24GDeviceEnumerator.cs
+│  ├─ Rapoo24GProbe.cs
 │  ├─ TrayIconService.cs
 │  ├─ SettingsService.cs
 │  └─ AppLog.cs
@@ -140,10 +151,11 @@ BlueMeter/
 ### 5.1 枚举
 
 ```csharp
-public enum BluetoothDeviceKind
+public enum DeviceTransportKind
 {
-    Ble,
-    Classic
+    BluetoothLe,
+    BluetoothClassic,
+    Hid24G
 }
 
 public enum BatteryReadStatus
@@ -162,21 +174,28 @@ public enum BatteryReadStatus
 ```csharp
 public sealed class DeviceBatteryState
 {
-    public required string Id { get; init; }          // DeviceInformation.Id
-    public ulong? Address { get; init; }              // 去重键，可能为空
+    public required string Id { get; set; }
+    public ulong? Address { get; set; }               // 蓝牙去重键；2.4G 为 null
     public required string Name { get; set; }
-    public BluetoothDeviceKind Kind { get; init; }
+    public DeviceTransportKind Transport { get; set; }
 
     public int? BatteryPercent { get; set; }          // 0–100，null = 未知
-    public DateTimeOffset? LastSuccessAt { get; set; } // 最近一次成功读取
+    public DateTimeOffset? LastSuccessAt { get; set; }
     public DateTimeOffset LastAttemptAt { get; set; }
     public BatteryReadStatus Status { get; set; }
 
     public bool IsConnected { get; set; }
     public bool SupportsNotifications { get; set; }
-    public string? ChargingText { get; set; }          // 可选：“充电中”
+    public string? ChargingText { get; set; }
 
-    public bool LowBatteryAlerted { get; set; }        // 本次放电周期是否已提醒
+    // 2.4G HID 身份；蓝牙设备为 null
+    public ushort? VendorId { get; set; }
+    public ushort? ProductId { get; set; }
+    public string? InterfacePath { get; set; }
+    public string? ReceiverId { get; set; }
+    public string? VendorName { get; set; }
+
+    public bool LowBatteryAlerted { get; set; }
 }
 ```
 
@@ -185,13 +204,23 @@ public sealed class DeviceBatteryState
 ```csharp
 public sealed record DeviceBatterySnapshot(
     string Id,
+    ulong? Address,
     string Name,
-    BluetoothDeviceKind Kind,
+    DeviceTransportKind Transport,
     int? BatteryPercent,
     BatteryReadStatus Status,
     DateTimeOffset? LastSuccessAt,
+    DateTimeOffset LastAttemptAt,
     bool IsConnected,
-    string? ChargingText);
+    bool SupportsNotifications,
+    string? ChargingText)
+{
+    public ushort? VendorId { get; init; }
+    public ushort? ProductId { get; init; }
+    public string? InterfacePath { get; init; }
+    public string? ReceiverId { get; init; }
+    public string? VendorName { get; init; }
+}
 ```
 
 ### 5.3 状态机
@@ -264,19 +293,22 @@ var classicDevices = await DeviceInformation.FindAllAsync(classicSelector, Prope
 
 分类依据是**来源查询**，不是 GATT 内容：
 
-| 来源 | `BluetoothDeviceKind` | 电量来源 |
+| 来源 | `DeviceTransportKind` | 电量来源 |
 | --- | --- | --- |
-| `BluetoothLEDevice` 选择器 | `Ble` | GATT 电池服务 |
-| `BluetoothDevice` 选择器 | `Classic` | 系统设备属性 |
+| `BluetoothLEDevice` 选择器 | `BluetoothLe` | GATT 电池服务 |
+| `BluetoothDevice` 选择器 | `BluetoothClassic` | 系统设备属性 |
+| Rapoo `24AE:1861/col05` HID 接口 | `Hid24G` | `0xBB` input report（只读） |
 
-“是否支持电量”在读取阶段判定：BLE 找 `0x180F`，经典找 `BatteryLife` 属性。遍历 GATT 全表只用于诊断，不作为常规分类手段（开销大）。
+“是否支持电量”在读取阶段判定：BLE 找 `0x180F`，经典找 `BatteryLife` 属性；2.4G 仅对已确认的 Rapoo 接口读取 `0xBB`。遍历 GATT 全表只用于诊断，不作为常规分类手段（开销大）。
+
+2.4G 不参与蓝牙地址去重，也不与同一物理鼠标的 BLE/经典条目合并：它们是不同的连接方式，应分别显示。
 
 ### 6.3 去重
 
 同一物理设备可能同时出现在 BLE 与经典列表（例如支持双模的鼠标）。
 
 1. 优先解析 `System.Devices.Aep.DeviceAddress` 为 `ulong`（蓝牙地址）。
-2. 有地址：按地址分组，保留一个逻辑设备，`Kind=Ble`，同时保留经典条目作为回退来源。
+2. 有地址：按地址分组，保留一个逻辑设备，`Transport=BluetoothLe`，同时保留经典条目作为回退来源。
 3. 无地址：按 `DeviceInformation.Id` 保留；无法判断重复时保留两条，并在 UI 中显示类型，宁可多显示也不误合并。
 4. 名称相同但地址不同：绝不合并。
 
@@ -379,6 +411,55 @@ if (status == GattCommunicationStatus.Success)
 
 ---
 
+## 7.5 Rapoo 2.4G HID（独立传输）
+
+> 本节是 BLE 章节之后的独立小节编号，但 2.4G **不是蓝牙**；它使用 USB HID 接收器，拥有独立的传输类型、枚举路径和厂商探针。
+
+### 范围
+
+- 仅支持已确认的 Rapoo 接收器：`VID_24AE&PID_1861`，接口 `MI_01/COL05`。
+- 仅读取电量。**禁止**向 `col04`/`0xBA` 配置集合发送 output/feature 报告，禁止修改 DPI、灯光、按键或设备设置。
+- LINGBAO K98（Compx `3554:FA09`）没有确认的电量协议，保持不支持；不根据 feature `0x06` 猜测电量。
+
+### 枚举
+
+```text
+SetupDiGetClassDevs(HID GUID, PRESENT | DEVICEINTERFACE)
+  → SetupDiEnumDeviceInterfaces / SetupDiGetDeviceInterfaceDetail
+  → path 过滤 vid_24ae&pid_1861、&mi_01& 与 &col05#
+  → CreateFile(GENERIC_READ, share read/write)
+  → HidD_GetAttributes                  // VID/PID
+  → HidD_GetPreparsedData + HidP_GetCaps
+  → 校验 usagePage=0xFF00, usage=0x0002, inputReportLength>=7
+  → HidD_GetProductString / ManufacturerString
+```
+
+只打开目标厂商集合；不枚举键盘/鼠标的标准 input 集合，不读取用户输入。
+
+### 报告
+
+| 项 | 值 |
+| --- | --- |
+| 接口 | `\\?\hid#vid_24ae&pid_1861&mi_01&col05#...` |
+| Top-level usage | `0xFF00 / 0x0002` |
+| Input report ID | `0xBB` |
+| 读取方式 | `HidD_GetInputReport(h, buffer, 7)`（只读） |
+| 官方应用 `ReadFile` 示例 | `BB B0 42 40 06 01 46` → 电量 `0x46` = 70 |
+| `HidD_GetInputReport` 示例 | `B0 42 40 06 01 46 00` → 电量索引 5 = 70 |
+| 查询频率 | 接收器约每 3 秒主动上报；应用按刷新周期读取，不发送查询 |
+
+解析同时兼容带 `0xBB` report id（索引 6）和 `HidD_GetInputReport` 返回的 `0xB0` payload（索引 5），最后校验 0–100。
+
+### 状态与生命周期
+
+- 枚举成功但没有目标设备 → 当前无 2.4G 设备；连续两轮缺失才移除旧条目。
+- HID 打开/读取失败 → 有旧值标 `Stale`，无旧值标 `Unavailable`；不阻塞 BLE 或其他设备。
+- 2.4G 读取排在 BLE 之前，避免慢 GATT 设备耗尽 30 秒单轮预算。
+- 蓝牙不可用（无适配器/关闭）时仍继续枚举和读取 2.4G；全局状态用 `Ready` + “蓝牙不可用；已检测到 2.4G 接收器设备”。
+- 厂商应用独占 HID 句柄时只读打开可能失败；下一轮自动重试。
+
+---
+
 ## 8. 经典蓝牙电量读取
 
 Windows 没有统一的经典蓝牙电量 API。一期只读取系统设备属性：
@@ -461,6 +542,7 @@ public async Task RunAsync(CancellationToken ct)
 - `SemaphoreSlim(1,1)` 保证同一时刻只有一轮在跑。
 - 手动刷新：若正在扫描，置 `_refreshQueued=true`，本轮结束后立即补跑一次；不并发。
 - 单轮内设备**串行**读取；每台设备独立超时、独立 try/catch。
+- 2.4G 读取是本地同步 HID 报告读取，排在 BLE 之前；不占用 BLE 的单设备 8 秒超时。
 - 单轮总预算耗尽后，剩余设备标记为“本轮跳过”（保留原状态），不标记失败。
 - 系统从睡眠恢复（`PowerModeChanged.Resume`）后清空等待，立即刷新。
 - 蓝牙开关变化（`Radio.StateChanged` / 全局检测）后下一轮重试；不做事件级重连风暴。
@@ -469,13 +551,14 @@ public async Task RunAsync(CancellationToken ct)
 ### 9.3 事件
 
 ```csharp
-public interface IBluetoothBatteryService
+public interface IDeviceBatteryService
 {
     event EventHandler<IReadOnlyList<DeviceBatterySnapshot>>? DevicesUpdated;
     event EventHandler<IReadOnlyList<LowBatteryNotice>>? LowBatteryDetected;
-    event EventHandler<ServiceStatus>? StatusChanged;
+    event EventHandler<DeviceServiceStatus>? StatusChanged;
 
     IReadOnlyList<DeviceBatterySnapshot> Current { get; }
+    DeviceServiceStatus Status { get; }
 
     Task StartAsync(CancellationToken ct);
     Task RefreshAsync(bool manual, CancellationToken ct);
@@ -485,7 +568,7 @@ public interface IBluetoothBatteryService
 
 - `DevicesUpdated`：每台设备读取完成后可发一次（增量），每轮结束再发一次完整快照；UI 侧做节流（100 ms 合并）。
 - `LowBatteryDetected`：每轮最多一次，批量携带本轮新触发的设备。
-- `StatusChanged`：蓝牙关闭、无适配器、枚举失败等全局状态。
+- `StatusChanged`：蓝牙关闭、无适配器、枚举失败，或“蓝牙不可用但 2.4G 可用”等全局状态。
 
 事件在后台线程触发。`MainViewModel` 捕获 UI `Dispatcher` 并 `BeginInvoke`，禁止在服务层直接操作控件。
 
@@ -570,7 +653,7 @@ _taskbarIcon.ShowNotification(
 App.OnStartup
  ├─ 获取单实例 Mutex；失败 → 第二实例直接退出（唤醒已有窗口可后补）
  ├─ 加载设置、初始化日志
- ├─ 创建 BluetoothBatteryService
+ ├─ 创建 DeviceBatteryService
  ├─ 创建 TrayIconService（TaskbarIcon，Visible）
  ├─ 创建 MainWindow + MainViewModel，订阅服务事件
  ├─ 若 !StartMinimized → Show()
@@ -702,8 +785,12 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 
 | 场景 | 检测方式 | 设备状态 | UI | 处理 |
 | --- | --- | --- | --- | --- |
-| 无蓝牙适配器 | `BluetoothAdapter.GetDefaultAsync()` 返回 null | — | 全局提示“未检测到蓝牙适配器” | 不启动读取循环，定时重试 |
-| 蓝牙关闭 | 枚举空 + Radio 状态 Off | 全部保留旧值 | 全局 `InfoBar` | 下一轮重试 |
+| 无蓝牙适配器 | `BluetoothAdapter.GetDefaultAsync()` 返回 null | — | 全局提示“未检测到蓝牙适配器”；若 2.4G 可用则显示其电量 | 仍枚举/读取 2.4G，定期重试蓝牙 |
+| 蓝牙关闭 | 枚举空 + Radio 状态 Off | 全部保留旧值 | 全局 `InfoBar` | 下一轮重试；2.4G 不受影响 |
+| 2.4G 接收器未插入 | SetupAPI 找不到 `24AE:1861/col05` | 连续 2 轮后移除 | 列表移除 | 不视为错误 |
+| 2.4G 接口被独占 | `CreateFile` 返回访问被拒 | `Stale`/`Unavailable` | “暂时不可达” | 只读共享打开；下轮重试；提示关闭厂商应用 |
+| 2.4G 报告无法解析 | 非 `0xB0/0xBB` 前缀或电量 >100 | `Stale`/`Unavailable` | 旧值或 `--` | Warn 日志，不写设备，不猜测 |
+| 2.4G 枚举失败 | SetupAPI/HID 异常 | 保留上一轮 | 不崩溃 | Warn 日志；不调用移除逻辑 |
 | 设备不可达 | `GattCommunicationStatus.Unreachable`、`COMException`（如 `0x800710DF` `ERROR_DEVICE_NOT_AVAILABLE`） | `Stale`/`Unavailable` | “暂时不可达” | 下轮重试，不立即重连 |
 | 访问被拒 | `UnauthorizedAccessException`、`0x80070005` | `Stale`/`Unavailable` | “暂时不可达” | 记录 Warn；可能需要在系统设置中检查权限/配对 |
 | 无电池服务 | 服务/特征值为空 | `NotSupported` | “不支持电量读取” | 每轮复查（设备固件可能动态暴露） |
@@ -774,6 +861,7 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 - 无网络访问、无遥测、无自动更新检查。
 - 设备列表仅存于内存；设置与日志仅本地。
 - 日志中的蓝牙地址掩码；设备名称保留（用于排查），文档提示用户分享日志前自行检查。
+- 2.4G 只记录产品名/厂商/VID/PID/失败阶段，不记录完整 HID 接口路径与报告缓冲区。
 - 不请求管理员权限；不安装服务/驱动。
 - 非打包 Win32 应用不需要声明 `bluetooth` 能力；若未来改为 MSIX，必须添加 `bluetooth` 能力与相应 `DeviceCapability`，否则枚举/访问会被系统拒绝。
 
@@ -794,6 +882,7 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 | 9 | 通知订阅 | `WriteClientCharacteristicConfigurationDescriptorAsync` | 需要特征值支持 Notify/Indicate；写 CCCD 后再订阅 `ValueChanged` |
 | 10 | 最低系统 17763 | 所用 API 引入版本：配对选择器 10586、GATT 15063、`PresentationFormats` 15063、`GattSession` 15063 | 均 ≤ 17763；Mica 仅 Win11，运行时退化 |
 | 11 | `System.Devices.Aep.DeviceCategory` | `System.Devices.Aep.Category` | 前者不是有效规范键，传给 `FindAllAsync` 会抛 `COMException 0x8002802B` |
+| 12 | Rapoo 2.4G 电量查询 | 只读 `HidD_GetInputReport(0xBB)` | 官方应用与独立探测确认；不使用 `col04`/`0xBA`，不发送 output/config 报告 |
 
 > 若未来将 TFM 升到 .NET 10，可同时评估 H.NotifyIcon.Wpf 2.4.x、WPF-UI 新版，并重新跑手测矩阵。
 
@@ -813,7 +902,7 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 
 ### 20.2 其他
 
-- `IBatteryProbe` 可扩展厂商 GATT 服务、USB 接收器电量。
+- `IBatteryProbe` 可继续扩展其他厂商 GATT 服务或已确认的 USB/HID 接收器；未确认协议不接入。
 - 设备历史写入本地存储（SQLite/JSONL），UI 增加趋势图。
 - 通知操作（静音 1 小时）需要通知回调/COM 激活，评估成本后再做。
 
@@ -829,6 +918,7 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 | BLE 策略 | 通知优先 + 全量轮询兜底 | 兼顾实时性与静默失效检测 |
 | 并发 | 单轮串行 | 降低 GATT 资源竞争与设备耗电 |
 | 状态 | LastKnown + 显式状态枚举 | UI 诚实表达，避免旧值伪装实时 |
+| Rapoo 2.4G | 独立 HID 传输 + 只读 `0xBB` | 协议已确认；不把 2.4G 归为蓝牙；绝不写配置集合 |
 | MVVM | 手写最小基类 | 减少依赖；本项目状态简单 |
 | 配置 | 本地 JSON | 无需注册表/数据库；易排查 |
 | 日志 | 自写轻量文件日志 | 避免引入 Serilog 等额外依赖 |

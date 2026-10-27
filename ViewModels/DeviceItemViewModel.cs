@@ -11,7 +11,7 @@ public sealed class DeviceItemViewModel
     {
         Id = snapshot.Id;
         Name = snapshot.Name;
-        Kind = snapshot.Kind;
+        Transport = snapshot.Transport;
         Status = snapshot.Status;
         BatteryPercent = snapshot.BatteryPercent;
         IsBatteryKnown = snapshot.BatteryPercent.HasValue;
@@ -24,7 +24,7 @@ public sealed class DeviceItemViewModel
 
     public string Name { get; }
 
-    public BluetoothDeviceKind Kind { get; }
+    public DeviceTransportKind Transport { get; }
 
     public BatteryReadStatus Status { get; }
 
@@ -42,8 +42,14 @@ public sealed class DeviceItemViewModel
     {
         var parts = new List<string>
         {
-            snapshot.Kind == BluetoothDeviceKind.Ble ? "BLE" : "经典蓝牙",
+            TransportText(snapshot.Transport),
         };
+
+        if (snapshot.Transport == DeviceTransportKind.Hid24G &&
+            !string.IsNullOrWhiteSpace(snapshot.VendorName))
+        {
+            parts.Add(snapshot.VendorName.Trim());
+        }
 
         if (snapshot.IsConnected)
         {
@@ -60,6 +66,15 @@ public sealed class DeviceItemViewModel
         return string.Join(" · ", parts);
     }
 
+    private static string TransportText(DeviceTransportKind transport) =>
+        transport switch
+        {
+            DeviceTransportKind.BluetoothLe => "BLE",
+            DeviceTransportKind.BluetoothClassic => "经典蓝牙",
+            DeviceTransportKind.Hid24G => "2.4G 接收器",
+            _ => "未知传输",
+        };
+
     private static string StatusText(DeviceBatterySnapshot snapshot) =>
         snapshot.Status switch
         {
@@ -72,9 +87,12 @@ public sealed class DeviceItemViewModel
                 : $"暂时不可达，上次 {FormatRelative(snapshot.LastSuccessAt.Value)}",
             BatteryReadStatus.Unavailable => "暂时不可达",
             BatteryReadStatus.NotSupported => "不支持电量读取",
-            _ => snapshot.Kind == BluetoothDeviceKind.Classic
-                ? "经典蓝牙电量待 M3 接入"
-                : "等待扫描",
+            _ => snapshot.Transport switch
+            {
+                DeviceTransportKind.BluetoothClassic => "经典蓝牙电量待 M3 接入",
+                DeviceTransportKind.Hid24G => "等待读取",
+                _ => "等待扫描",
+            },
         };
 
     private static string FormatRelative(DateTimeOffset timestamp)

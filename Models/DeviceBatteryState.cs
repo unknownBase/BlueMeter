@@ -11,7 +11,7 @@ public sealed class DeviceBatteryState
 
     public required string Name { get; set; }
 
-    public BluetoothDeviceKind Kind { get; set; }
+    public DeviceTransportKind Transport { get; set; }
 
     public int? BatteryPercent { get; set; }
 
@@ -26,6 +26,16 @@ public sealed class DeviceBatteryState
     public bool SupportsNotifications { get; set; }
 
     public string? ChargingText { get; set; }
+
+    public ushort? VendorId { get; set; }
+
+    public ushort? ProductId { get; set; }
+
+    public string? InterfacePath { get; set; }
+
+    public string? ReceiverId { get; set; }
+
+    public string? VendorName { get; set; }
 
     /// <summary>
     /// 本次放电周期是否已经触发过低电量事件；读数回升到阈值 + 5 以上后重新武装。
