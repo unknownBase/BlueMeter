@@ -6,8 +6,8 @@ using Microsoft.Win32.SafeHandles;
 namespace BlueMeter.Services;
 
 /// <summary>
-/// 只读 HID 互操作。这里只打开设备、读取属性和 input report，
-/// 不调用 WriteFile、HidD_SetFeature 或 HidD_SetOutputReport。
+/// 只读 HID 互操作。Rapoo 仅读取 input report；LINGBAO K98 只发送固定的只读电量查询命令。
+/// 本类不调用 HidD_SetFeature / HidD_SetOutputReport，不修改设备设置。
 /// </summary>
 internal static class HidInterop
 {
@@ -16,13 +16,21 @@ internal static class HidInterop
     private const uint DigcfPresent = 0x00000002;
     private const uint DigcfDeviceInterface = 0x00000010;
     private const uint GenericRead = 0x80000000;
+    private const uint GenericWrite = 0x40000000;
     private const uint FileShareRead = 0x00000001;
     private const uint FileShareWrite = 0x00000002;
     private const uint OpenExisting = 3;
+    private const uint FileFlagOverlapped = 0x40000000;
+    private const int ErrorIoPending = 997;
+    private const int ErrorTimeout = 1460;
+    private const int ErrorInvalidParameter = 87;
     private const int ErrorNoMoreItems = 259;
     private const int ErrorInsufficientBuffer = 122;
     private const int HidpStatusSuccess = 0x00110000;
     private const int HidStringBufferLength = 512;
+    private const uint WaitObject0 = 0;
+    private const uint WaitTimeout = 258;
+    private const uint Infinite = 0xFFFFFFFF;
 
     internal static IReadOnlyList<string> EnumerateHidInterfacePaths()
     {
@@ -148,6 +156,32 @@ internal static class HidInterop
         return null;
     }
 
+    /// <summary>
+    /// 仅用于发送固定的只读电量查询命令。句柄以 overlapped 方式打开，
+    /// 以便读写都带超时并在取消时中止。
+    /// </summary>
+    internal static SafeFileHandle? TryOpenReadWrite(string path, out int error)
+    {
+        var handle = CreateFile(
+            path,
+            GenericRead | GenericWrite,
+            FileShareRead | FileShareWrite,
+            IntPtr.Zero,
+            OpenExisting,
+            FileFlagOverlapped,
+            IntPtr.Zero);
+
+        if (!handle.IsInvalid)
+        {
+            error = 0;
+            return handle;
+        }
+
+        error = Marshal.GetLastWin32Error();
+        handle.Dispose();
+        return null;
+    }
+
     internal static bool TryGetAttributes(
         SafeFileHandle handle,
         out HidAttributes attributes)
@@ -215,6 +249,196 @@ internal static class HidInterop
         return HidD_GetInputReport(handle, buffer, buffer.Length);
     }
 
+    /// <summary>
+    /// 发送一个固定长度的 output report。只用于 K98 的只读电量查询。
+    /// </summary>
+    internal static bool TryWriteReport(
+        SafeFileHandle handle,
+        byte[] report,
+        int timeoutMilliseconds,
+        CancellationToken cancellationToken,
+        out int error)
+    {
+        error = 0;
+        if (report.Length == 0)
+        {
+            error = ErrorInvalidParameter;
+            return false;
+        }
+
+        var eventHandle = CreateEventW(IntPtr.Zero, true, false, null);
+        if (eventHandle == IntPtr.Zero)
+        {
+            error = Marshal.GetLastWin32Error();
+            return false;
+        }
+
+        var bufferHandle = GCHandle.Alloc(report, GCHandleType.Pinned);
+        var overlapped = new HidOverlapped { Event = eventHandle };
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (WriteFile(
+                    handle,
+                    bufferHandle.AddrOfPinnedObject(),
+                    report.Length,
+                    out var written,
+                    ref overlapped))
+            {
+                if (written != report.Length)
+                {
+                    error = ErrorInvalidParameter;
+                    return false;
+                }
+
+                return true;
+            }
+
+            error = Marshal.GetLastWin32Error();
+            if (error != ErrorIoPending)
+            {
+                return false;
+            }
+
+            if (!TryWaitForIo(handle, ref overlapped, timeoutMilliseconds, cancellationToken, out error))
+            {
+                return false;
+            }
+
+            if (!GetOverlappedResult(handle, ref overlapped, out written, false))
+            {
+                error = Marshal.GetLastWin32Error();
+                return false;
+            }
+
+            if (written != report.Length)
+            {
+                error = ErrorInvalidParameter;
+                return false;
+            }
+
+            return true;
+        }
+        finally
+        {
+            bufferHandle.Free();
+            CloseHandle(eventHandle);
+        }
+    }
+
+    /// <summary>
+    /// 读取一个 input report。只用于 K98 的只读电量响应。
+    /// </summary>
+    internal static bool TryReadReport(
+        SafeFileHandle handle,
+        byte[] buffer,
+        int timeoutMilliseconds,
+        CancellationToken cancellationToken,
+        out int bytesRead,
+        out int error)
+    {
+        bytesRead = 0;
+        error = 0;
+        if (buffer.Length == 0)
+        {
+            error = ErrorInvalidParameter;
+            return false;
+        }
+
+        var eventHandle = CreateEventW(IntPtr.Zero, true, false, null);
+        if (eventHandle == IntPtr.Zero)
+        {
+            error = Marshal.GetLastWin32Error();
+            return false;
+        }
+
+        var bufferHandle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        var overlapped = new HidOverlapped { Event = eventHandle };
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (ReadFile(
+                    handle,
+                    bufferHandle.AddrOfPinnedObject(),
+                    buffer.Length,
+                    out bytesRead,
+                    ref overlapped))
+            {
+                return true;
+            }
+
+            error = Marshal.GetLastWin32Error();
+            if (error != ErrorIoPending)
+            {
+                return false;
+            }
+
+            if (!TryWaitForIo(handle, ref overlapped, timeoutMilliseconds, cancellationToken, out error))
+            {
+                return false;
+            }
+
+            if (!GetOverlappedResult(handle, ref overlapped, out bytesRead, false))
+            {
+                error = Marshal.GetLastWin32Error();
+                return false;
+            }
+
+            return true;
+        }
+        finally
+        {
+            bufferHandle.Free();
+            CloseHandle(eventHandle);
+        }
+    }
+
+    private static bool TryWaitForIo(
+        SafeFileHandle handle,
+        ref HidOverlapped overlapped,
+        int timeoutMilliseconds,
+        CancellationToken cancellationToken,
+        out int error)
+    {
+        error = 0;
+        var started = Environment.TickCount64;
+
+        while (true)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                CancelIoEx(handle, ref overlapped);
+                WaitForSingleObject(overlapped.Event, Infinite);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            var remaining = timeoutMilliseconds - (int)(Environment.TickCount64 - started);
+            if (remaining <= 0)
+            {
+                CancelIoEx(handle, ref overlapped);
+                WaitForSingleObject(overlapped.Event, Infinite);
+                error = ErrorTimeout;
+                return false;
+            }
+
+            var wait = WaitForSingleObject(overlapped.Event, (uint)Math.Min(remaining, 50));
+            if (wait == WaitObject0)
+            {
+                return true;
+            }
+
+            if (wait == WaitTimeout)
+            {
+                continue;
+            }
+
+            error = Marshal.GetLastWin32Error();
+            return false;
+        }
+    }
+
     private static string? GetString(SafeFileHandle handle, HidStringKind kind)
     {
         var buffer = new StringBuilder(HidStringBufferLength);
@@ -253,6 +477,16 @@ internal static class HidInterop
         public ushort VendorId;
         public ushort ProductId;
         public ushort VersionNumber;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HidOverlapped
+    {
+        public IntPtr Internal;
+        public IntPtr InternalHigh;
+        public int Offset;
+        public int OffsetHigh;
+        public IntPtr Event;
     }
 
     private enum HidStringKind
@@ -359,6 +593,49 @@ internal static class HidInterop
 
     [DllImport("setupapi.dll", SetLastError = true)]
     private static extern bool SetupDiDestroyDeviceInfoList(IntPtr deviceInfoSet);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool WriteFile(
+        SafeFileHandle hFile,
+        IntPtr lpBuffer,
+        int nNumberOfBytesToWrite,
+        out int lpNumberOfBytesWritten,
+        ref HidOverlapped lpOverlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool ReadFile(
+        SafeFileHandle hFile,
+        IntPtr lpBuffer,
+        int nNumberOfBytesToRead,
+        out int lpNumberOfBytesRead,
+        ref HidOverlapped lpOverlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateEventW(
+        IntPtr lpEventAttributes,
+        bool bManualReset,
+        bool bInitialState,
+        string? lpName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(
+        IntPtr hHandle,
+        uint dwMilliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetOverlappedResult(
+        SafeFileHandle hFile,
+        ref HidOverlapped lpOverlapped,
+        out int lpNumberOfBytesTransferred,
+        bool bWait);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CancelIoEx(
+        SafeFileHandle hFile,
+        ref HidOverlapped lpOverlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFile(

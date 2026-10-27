@@ -14,25 +14,28 @@
 ### Added
 
 - Rapoo 2.4G 只读电量支持：`VID_24AE&PID_1861` 的 `MI_01/COL05` HID 接口，`HidD_GetInputReport(0xBB)` 读取电量。
-- 新增独立的 `Hid24GDeviceInfo` 身份模型与 `DeviceTransportKind.Hid24G`，UI 明确显示“2.4G 接收器”，不与 BLE/经典蓝牙合并。
-- 新增 `HidInterop`（SetupAPI/HID 只读 P/Invoke）、`Rapoo24GDeviceEnumerator`、`Rapoo24GProbe`。
+- LINGBAO K98 2.4G 只读电量支持：`VID_3554&PID_FA09` 的 `MI_01/COL01` HID 接口，发送固定 20 字节 `13 4A 01 ...` 查询并解析 `13 4A 01 00 02 <battery> <status> ...`。
+- 新增独立的 `Hid24GDeviceInfo` 身份模型、`Hid24GProtocol` 与 `DeviceTransportKind.Hid24G`，UI 明确显示“2.4G 接收器”，不与 BLE/经典蓝牙合并。
+- 新增 `HidInterop`（SetupAPI/HID P/Invoke，含 K98 固定查询的 overlapped 读写）、`Rapoo24GDeviceEnumerator`、`Rapoo24GProbe`、`K98_24GDeviceEnumerator`、`K98_24GProbe`，以及合并/分派用的 `Hid24GDeviceEnumerator`、`Hid24GProbe`。
 - 无蓝牙适配器时继续读取 2.4G 接收器；2.4G 枚举失败保留旧状态，连续两轮缺失才移除。
 - 主窗口摘要分别统计 BLE / 经典蓝牙 / 2.4G；托盘摘要纳入 2.4G 电量。
-- 文档记录 Rapoo 协议事实、只读边界、LINGBAO K98 不支持与厂商应用独占风险。
+- 文档记录 Rapoo 与 K98 的协议事实、只读边界、厂商应用独占风险与支持范围。
 
 ### Changed
 
 - `BluetoothDeviceKind` → `DeviceTransportKind`（`BluetoothLe` / `BluetoothClassic` / `Hid24G`）。
 - `BluetoothBatteryService` → `DeviceBatteryService`；`IBluetoothBatteryService` → `IDeviceBatteryService`。
 - `BluetoothServiceStatus` / `BluetoothServiceState` → `DeviceServiceStatus` / `DeviceServiceState`。
+- 2.4G 枚举结果拆分为 `Hid24GEnumerationResult`，Rapoo/K98 各自维护枚举器与探针，由 `Hid24GDeviceEnumerator` / `Hid24GProbe` 按协议分派。
+- 2.4G 探针每次返回完整充电状态：不充电时清除上一次的“充电中”，避免状态残留。
 - 版本提升至 `0.3.1`。
 
 ### Notes
 
-- 2.4G 支持严格限定为 Rapoo `24AE:1861` 的已确认协议；不承诺通用 2.4G/USB 接收器。
-- 不向 `col04`/`0xBA` 配置通道发送任何报告，不修改 DPI、灯光、按键或设备设置。
-- LINGBAO K98 的厂商应用未暴露电量协议，保持不支持，不伪造读数。
-- 当前实机已验证 Rapoo 接收器读取 70%；BLE 真实 GATT 读取仍受开发机无蓝牙适配器限制。
+- 2.4G 支持严格限定为 Rapoo `24AE:1861/col05` 与 LINGBAO K98 `3554:FA09/col01` 的已确认协议；不承诺通用 2.4G/USB 接收器，其他 LINGBAO 型号不套用 K98 协议。
+- 不向 `col04`/`0xBA` 配置通道发送任何报告，不修改 DPI、灯光、按键或设备设置；K98 只发送固定只读查询与必要的 `13 07` 唤醒查询。
+- 不使用 K98 的 feature `0x06` 猜测电量，也不依赖 `KB.ini` 的 `ShowPower` 开关；厂商电量 UI 只是旁证。
+- 当前实机已验证 Rapoo 接收器读取 69–70%、LINGBAO K98 读取 53%；BLE 真实 GATT 读取仍受开发机无蓝牙适配器限制。
 
 ## [0.3.0] - 2026-10-27
 

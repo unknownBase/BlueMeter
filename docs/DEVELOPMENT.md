@@ -15,7 +15,7 @@
 | .NET Desktop Runtime | 8.x（运行框架依赖构建时） | `dotnet --list-runtimes` |
 | IDE | Visual Studio 2022 17.8+，安装“.NET 桌面开发” | 可选 |
 | 蓝牙 | 适配器可用、系统蓝牙开启（仅蓝牙设备需要） | 设置 → 蓝牙和设备 |
-| 测试设备 | 至少一台已配对 BLE 设备；经典设备可选；Rapoo 2.4G 接收器可选 | 设置 → 蓝牙和设备 / USB |
+| 测试设备 | 至少一台已配对 BLE 设备；经典设备可选；Rapoo / LINGBAO K98 2.4G 接收器可选 | 设置 → 蓝牙和设备 / USB |
 
 本机当前环境（文档编写时）：
 
@@ -276,9 +276,10 @@ dotnet publish .\BlueMeter.csproj -c Release -r win-arm64 --self-contained false
 - [ ] 目标设备已在 **设置 → 蓝牙和设备 → 设备** 中完成配对，而不是仅出现在“添加设备”列表。
 - [ ] 设备电量充足、已开机、未处于深度休眠；首次测试建议唤醒设备并靠近电脑。
 - [ ] 设备未被手机/平板同时占用（部分设备同一时间只接受一个主机）。
-- [ ] 厂商配套软件（罗技 Options+、雷蛇 Synapse、RapooGameDev 等）未独占设备；如有冲突，退出厂商软件再试。
+- [ ] 厂商配套软件（罗技 Options+、雷蛇 Synapse、RapooGameDev、LINGBAO 厂商工具等）未独占设备；如有冲突，退出厂商软件再试。
 - [ ] Rapoo 2.4G：接收器已插入，设备管理器中存在 `VID_24AE&PID_1861` 的 `MI_01/COL05` HID 接口；官方应用能显示电量。
-- [ ] 确认不是 LINGBAO K98 等未支持设备；未确认协议不会显示 2.4G 电量。
+- [ ] LINGBAO K98 2.4G：接收器已插入，设备管理器中存在 `VID_3554&PID_FA09` 的 `MI_01/COL01` HID 接口，usage page/usage 为 `0xFF02/0x0002`；`KB.ini` 的 `ShowPower` 只影响厂商 UI，不影响 BlueMeter 的固定只读查询。
+- [ ] 确认不是其他未确认的 LINGBAO 型号；K98 的 `13 4A` 只读查询不能套用到其他型号。
 - [ ] BLE 设备确认暴露电池服务：
   - 使用 Bluetooth LE Explorer / nRF Connect 查看是否存在 `0x180F` 与 `0x2A19`；
   - 若不存在，BlueMeter 只能显示“不支持电量读取”。
@@ -318,6 +319,11 @@ Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Device
 Get-PnpDevice -PresentOnly |
     Where-Object InstanceId -Like '*VID_24AE&PID_1861*' |
     Format-Table Status, FriendlyName, InstanceId -AutoSize
+
+# LINGBAO K98 2.4G HID 接口（应出现 VID_3554&PID_FA09，且包含 col01）
+Get-PnpDevice -PresentOnly |
+    Where-Object InstanceId -Like '*VID_3554&PID_FA09*' |
+    Format-Table Status, FriendlyName, InstanceId -AutoSize
 ```
 
 > 注册表只能证明“曾经配对”，不能证明设备当前可达；最终以应用枚举结果为准。
@@ -337,6 +343,7 @@ Get-PnpDevice -PresentOnly |
 | T05 | P0 | 单实例 | 连续启动两次 exe | 只有一个进程/一个托盘图标；第二实例退出 |
 | T06 | P0 | BLE 鼠标 | 配对并唤醒 BLE 鼠标 | 显示名称、BLE、电量、更新时间 |
 | T06a | P0 | Rapoo 2.4G | 插入 `24AE:1861` 接收器，官方应用显示 70% | 显示“2.4G 接收器”，电量 70%；不显示 BLE/经典；无写入 |
+| T06b | P0 | LINGBAO K98 2.4G | 插入 `3554:FA09` 接收器，厂商工具显示 53% | 显示“2.4G 接收器”，电量 53%（±同一报告周期波动）；只发送固定只读查询 |
 | T07 | P0 | BLE 键盘 | 同上 | 电量合理；通知或轮询至少一种生效 |
 | T08 | P1 | 经典鼠标 | 配对经典蓝牙鼠标 | 有系统属性则显示；无属性显示“不支持” |
 | T09 | P1 | 不支持设备 | 配对不暴露电池服务的耳机 | 显示 `--` + “不支持电量读取”，不崩溃 |
@@ -359,12 +366,12 @@ Get-PnpDevice -PresentOnly |
 | T26 | P0 | 启动即托盘 | 开启“启动时最小化”，重启应用 | 只出现托盘图标；左键可打开窗口 |
 | T27 | P1 | 设置持久化 | 修改间隔/阈值后重启 | 设置保留；非法 JSON 回退默认值 |
 | T28 | P1 | ToolTip 长度 | 设备名很长、多设备低电量 | ≤120 字符；摘要正确 |
-| T29 | P2 | 无适配器 | 虚拟机/禁用蓝牙适配器 | 显示“未检测到蓝牙适配器”；若插入 Rapoo 2.4G 接收器仍能显示电量；不崩溃 |
+| T29 | P2 | 无适配器 | 虚拟机/禁用蓝牙适配器 | 显示“未检测到蓝牙适配器”；若插入 Rapoo / K98 2.4G 接收器仍能显示电量；不崩溃 |
 | T31 | P1 | 2.4G 拔插 | 读取成功后拔出接收器，等待两轮再插回 | 先“暂时不可达”，两轮后移除；插回后恢复 |
-| T32 | P1 | 2.4G 独占 | 打开官方 Rapoo 应用并保持连接 | 只读打开失败时显示不可达；关闭应用后恢复；不写配置 |
+| T32 | P1 | 2.4G 独占 | 打开官方 Rapoo / LINGBAO 应用并保持连接 | 打开失败时显示不可达；关闭应用后恢复；不写配置 |
 | T30 | P1 | 多电池服务 | 双耳耳机等多服务设备 | 取第一个成功值；日志记录实例数 |
 
-> 当前 `0.3.1`：本机无蓝牙适配器，但已用 Rapoo `24AE:1861` 实机验证 T06a（读取 70%）、T29（无适配器仍读取 2.4G）与 T31/T32 的代码路径。T06、T07、T09、T10、T11、T15、T16 等 BLE 场景需在有适配器的实机补验；T08 的经典真实电量、T12–T14 的托盘气泡在 M3 完成。
+> 当前 `0.3.1`：本机无蓝牙适配器，但已用 Rapoo `24AE:1861` 实机验证 T06a（读取 69–70%）、用 LINGBAO K98 `3554:FA09` 实机验证 T06b（读取 53%），并验证 T29（无适配器仍读取 2.4G）与 T31/T32 的代码路径。T06、T07、T09、T10、T11、T15、T16 等 BLE 场景需在有适配器的实机补验；T08 的经典真实电量、T12–T14 的托盘气泡在 M3 完成。
 
 ### 低电量测试技巧
 
@@ -385,9 +392,12 @@ Get-PnpDevice -PresentOnly |
 | BLE 设备显示“不支持” | 无 `0x180F`；设备固件不暴露；服务是自定义 UUID | 用 BLE 工具确认服务；一期不解析厂商私有服务 |
 | BLE 读取一直失败 | 设备休眠/被手机占用/距离远；GATT 缓存；厂商软件独占 | 唤醒设备、断开手机、重启蓝牙、退出厂商软件；看日志 HRESULT |
 | 经典设备无电量 | 系统属性不存在 | 这是预期限制；二期 RFCOMM；不要显示 0% |
-| Rapoo 2.4G 不显示 | 接收器不是 `24AE:1861`；没有 `col05`；接收器未插入 | `Get-PnpDevice` 确认 InstanceId；只支持已确认型号；不要套用 LINGBAO 协议 |
+| Rapoo 2.4G 不显示 | 接收器不是 `24AE:1861`；没有 `col05`；接收器未插入 | `Get-PnpDevice` 确认 InstanceId；只支持已确认型号；不要套用 K98 协议 |
 | Rapoo 2.4G 显示不可达 | 厂商应用独占 HID；接收器休眠；只读打开被拒 | 关闭 RapooGameDev；重新插拔接收器；看 `[Hid24G]` Win32 错误 |
 | Rapoo 2.4G 电量不对 | 设备刚切换连接/报告周期未更新 | 等待下一轮；与官方应用同一时刻对比；不要修改 `col04` 配置通道 |
+| LINGBAO K98 2.4G 不显示 | 接收器不是 `3554:FA09`；没有 `col01`；usage 不是 `0xFF02/0x0002`；接收器未插入 | `Get-PnpDevice` 确认 InstanceId；只支持 K98；其他 LINGBAO 型号不套用该协议 |
+| K98 2.4G 显示不可达 | 厂商工具独占 HID；接收器休眠未响应；读写打开被拒 | 关闭厂商工具；重新插拔接收器；看 `[Hid24G]` 的 Win32 错误码（1460 = 超时） |
+| K98 2.4G 电量不对或无效 | checksum/report id 不符；设备刚上电未响应；电量 >100 被拒绝 | 看 Debug 日志是否收到 `13 4A` 响应；等下一轮；不要改用 feature `0x06` 猜测 |
 | 电量明显偏旧 | 系统属性缓存；设备未连接 | 看 `LastSuccessAt`；UI 标注时间；接受经典设备限制 |
 | 托盘图标不出现 | 图标资源未打包；`TaskbarIcon` 被 GC；Explorer 异常 | 确认 Build Action=Resource；字段持有实例；`ForceCreate()`；重启 Explorer |
 | 关闭窗口后进程退出 | `ShutdownMode` 不是 `OnExplicitShutdown`；仍有 `StartupUri` | 检查 App.xaml；移除 StartupUri |

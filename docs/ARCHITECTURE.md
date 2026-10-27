@@ -9,7 +9,7 @@
 ### 目标
 
 - 常驻托盘，关闭主窗口不退出。
-- 汇总本机**已配对** BLE/经典蓝牙设备，以及已确认的 Rapoo 2.4G HID 接收器设备的电量。
+- 汇总本机**已配对** BLE/经典蓝牙设备，以及已确认的 Rapoo / LINGBAO K98 2.4G HID 接收器设备的电量。
 - 设备不稳定（休眠、走远、关机、被独占）时保持进程稳定，保留上次成功值并诚实标注。
 - Fluent UI 跟随系统主题、强调色与背景材质。
 - 低频、串行、可控的蓝牙与 HID 访问，避免连接风暴与额外耗电。
@@ -20,7 +20,7 @@
 - WPF-UI `4.3.0`；H.NotifyIcon.Wpf `2.3.2`；不使用 WinForms `NotifyIcon`。
 - 一期不实现经典蓝牙 RFCOMM `IPHONEACCEV`。
 - 不引入第二套 UI 框架或额外的蓝牙封装库。
-- 2.4G 支持仅限已确认的 Rapoo `24AE:1861/col05` 只读报告；不发送 output/config 报告，不承诺通用 2.4G/USB 接收器。
+- 2.4G 支持仅限已确认的 Rapoo `24AE:1861/col05` 只读报告与 LINGBAO K98 `3554:FA09/col01` 固定只读查询；不发送配置/设置写入，不承诺通用 2.4G/USB 接收器。
 
 ---
 
@@ -31,7 +31,7 @@
 │ Windows Shell                                                    │
 │  ├─ 通知区域（托盘图标、ToolTip、气泡通知）                       │
 │  ├─ 设置 → 蓝牙和设备（配对关系）                                 │
-│  └─ HID 设备接口（Rapoo 2.4G 接收器）                             │
+│  └─ HID 设备接口（Rapoo / LINGBAO K98 2.4G 接收器）               │
 └───────────────▲───────────────────────────────▲──────────────────┘
                 │ Shell_NotifyIcon             │ 配对属性 / HID 接口
 ┌───────────────┴───────────────────────────────┴──────────────────┐
@@ -46,6 +46,7 @@
 │  ├─ BLE：GATT 0x180F / 0x2A19 / 0x2904 / CCCD                    │
 │  ├─ BR/EDR：系统设备属性 System.Devices.BatteryLife              │
 │  └─ 2.4G：Rapoo 24AE:1861/col05 → HidD_GetInputReport(0xBB)      │
+│            LINGBAO K98 3554:FA09/col01 → 固定只读查询 13 4A      │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -72,9 +73,11 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 │ 后台线程 / 线程池                                                      │
 │  DeviceBatteryService（单轮循环、SemaphoreSlim 串行）                  │
 │    ├─ 蓝牙枚举：BLE AQS + Classic AQS + 地址去重                       │
-│    ├─ 2.4G 枚举：SetupAPI + HID caps（Rapoo 24AE:1861/col05）          │
+│    ├─ 2.4G 枚举：SetupAPI + HID caps（Rapoo/K98 独立厂商路径）          │
 │    ├─ BleBatteryProbe：GATT 读取、CCCD 订阅、ValueChanged              │
+│    ├─ Hid24GProbe：按协议分派 Rapoo / K98                             │
 │    ├─ Rapoo24GProbe：HidD_GetInputReport(0xBB)，只读                   │
+│    ├─ K98_24GProbe：固定 13 4A 只读查询 + overlapped 超时              │
 │    └─ 状态仓库：LastKnownBattery / LastSuccessAt / AlertLatch          │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -92,11 +95,15 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 | `ClassicBatteryProbe` | 单台经典设备的系统属性读取 | GATT |
 | `Rapoo24GDeviceEnumerator` | 枚举 Rapoo 2.4G `24AE:1861` 的 `MI_01/COL05` HID 接口、校验 caps | 读取电量 |
 | `Rapoo24GProbe` | `HidD_GetInputReport(0xBB)` 只读电量解析 | 发送配置/输出报告 |
-| `HidInterop` | SetupAPI/HID 只读 P/Invoke、路径与字符串读取 | 写设备 |
+| `K98_24GDeviceEnumerator` | 枚举 LINGBAO K98 2.4G `3554:FA09` 的 `MI_01/COL01` HID 接口、校验 caps | 读取电量 |
+| `K98_24GProbe` | 固定 `13 4A` 只读查询、校验 checksum、解析电量/充电状态 | 写配置、feature `0x06` 猜测 |
+| `Hid24GDeviceEnumerator` | 合并 Rapoo/K98 枚举结果，保留单厂商失败状态 | 解析电量 |
+| `Hid24GProbe` | 按 `Hid24GProtocol` 分派厂商探针 | 共享命令格式 |
+| `HidInterop` | SetupAPI/HID P/Invoke、caps/字符串、K98 固定查询的 overlapped 读写 | 写配置/设置 |
 | `SettingsService` | JSON 读写、默认值、校验、变更事件 | UI |
 | `AppLog` | 文件日志、滚动、脱敏 | 业务判断 |
 
-> 当前 `0.3.1` 已实现 `DeviceBatteryService`、`BleBatteryProbe`、`Rapoo24GDeviceEnumerator`、`Rapoo24GProbe` 与 M2 领域模型；主窗口暂用轻量预览列表，`MainViewModel`、`ClassicBatteryProbe`、`BatteryBar` 等留到 M3/M4。
+> 当前 `0.3.1` 已实现 `DeviceBatteryService`、`BleBatteryProbe`、`Rapoo24GDeviceEnumerator`、`Rapoo24GProbe`、`K98_24GDeviceEnumerator`、`K98_24GProbe`、合并分派器与 M2 领域模型；主窗口暂用轻量预览列表，`MainViewModel`、`ClassicBatteryProbe`、`BatteryBar` 等留到 M3/M4。
 
 ---
 
@@ -120,8 +127,13 @@ BlueMeter/
 │  ├─ DeviceBatteryService.cs
 │  ├─ BleBatteryProbe.cs
 │  ├─ HidInterop.cs
+│  ├─ Hid24GEnumerationResult.cs
+│  ├─ Hid24GDeviceEnumerator.cs
+│  ├─ Hid24GProbe.cs
 │  ├─ Rapoo24GDeviceEnumerator.cs
 │  ├─ Rapoo24GProbe.cs
+│  ├─ K98_24GDeviceEnumerator.cs
+│  ├─ K98_24GProbe.cs
 │  ├─ TrayIconService.cs
 │  ├─ SettingsService.cs
 │  └─ AppLog.cs
@@ -167,7 +179,16 @@ public enum BatteryReadStatus
     Unavailable,    // 读取失败，且没有可用的历史值
     NotSupported    // 设备未暴露电量来源
 }
+
+public enum Hid24GProtocol
+{
+    Unknown,        // 未识别的 2.4G 接口，不尝试读取
+    Rapoo,          // HidD_GetInputReport(0xBB)
+    LingbaoK98      // 固定 13 4A 只读查询
+}
 ```
+
+`Hid24GDeviceInfo` 携带 `Protocol`，`Hid24GProbe` 只按该枚举分派到对应厂商探针；协议不从 VID/PID 之外的特征推断，也不在厂商之间复用命令格式。
 
 ### 5.2 设备状态
 
@@ -298,8 +319,9 @@ var classicDevices = await DeviceInformation.FindAllAsync(classicSelector, Prope
 | `BluetoothLEDevice` 选择器 | `BluetoothLe` | GATT 电池服务 |
 | `BluetoothDevice` 选择器 | `BluetoothClassic` | 系统设备属性 |
 | Rapoo `24AE:1861/col05` HID 接口 | `Hid24G` | `0xBB` input report（只读） |
+| LINGBAO K98 `3554:FA09/col01` HID 接口 | `Hid24G` | `13 4A` 固定只读查询 |
 
-“是否支持电量”在读取阶段判定：BLE 找 `0x180F`，经典找 `BatteryLife` 属性；2.4G 仅对已确认的 Rapoo 接口读取 `0xBB`。遍历 GATT 全表只用于诊断，不作为常规分类手段（开销大）。
+“是否支持电量”在读取阶段判定：BLE 找 `0x180F`，经典找 `BatteryLife` 属性；2.4G 仅对已确认的 Rapoo/K98 接口使用各自协议。遍历 GATT 全表只用于诊断，不作为常规分类手段（开销大）。
 
 2.4G 不参与蓝牙地址去重，也不与同一物理鼠标的 BLE/经典条目合并：它们是不同的连接方式，应分别显示。
 
@@ -411,32 +433,41 @@ if (status == GattCommunicationStatus.Success)
 
 ---
 
-## 7.5 Rapoo 2.4G HID（独立传输）
+## 7.6 2.4G HID（Rapoo / LINGBAO K98，独立传输）
 
-> 本节是 BLE 章节之后的独立小节编号，但 2.4G **不是蓝牙**；它使用 USB HID 接收器，拥有独立的传输类型、枚举路径和厂商探针。
+> 2.4G **不是蓝牙**；它使用 USB HID 接收器，拥有独立的传输类型、枚举路径和厂商探针。Rapoo 与 K98 的命令/报告格式彼此独立，`Hid24GProtocol` 只用于分派，不得跨厂商复用命令或按 VID/PID 之外的信息推断协议。
 
 ### 范围
 
-- 仅支持已确认的 Rapoo 接收器：`VID_24AE&PID_1861`，接口 `MI_01/COL05`。
-- 仅读取电量。**禁止**向 `col04`/`0xBA` 配置集合发送 output/feature 报告，禁止修改 DPI、灯光、按键或设备设置。
-- LINGBAO K98（Compx `3554:FA09`）没有确认的电量协议，保持不支持；不根据 feature `0x06` 猜测电量。
+- 仅支持已确认的两种接收器：
+  - Rapoo `VID_24AE&PID_1861`，接口 `MI_01/COL05`，Top-level usage `0xFF00/0x0002`。
+  - LINGBAO K98 `VID_3554&PID_FA09`，接口 `MI_01/COL01`，Top-level usage `0xFF02/0x0002`。
+- 仅读取电量。**禁止**向 Rapoo 的 `col04`/`0xBA` 配置集合发送 output/feature 报告；禁止修改 DPI、灯光、按键或设备设置。
+- K98 只发送固定的 `13 4A` 电量查询与必要的 `13 07` 唤醒查询，不使用 feature `0x06` 猜测电量。
+- K98 的 `KB.ini` `ShowPower=1` 只用于打开厂商电量 UI，BlueMeter 不依赖该开关。
+- 其他 LINGBAO 型号或其他 2.4G 接收器不套用上述协议，确认前保持不支持。
 
 ### 枚举
 
 ```text
 SetupDiGetClassDevs(HID GUID, PRESENT | DEVICEINTERFACE)
   → SetupDiEnumDeviceInterfaces / SetupDiGetDeviceInterfaceDetail
-  → path 过滤 vid_24ae&pid_1861、&mi_01& 与 &col05#
-  → CreateFile(GENERIC_READ, share read/write)
+  → path 过滤已确认的 VID/PID + 接口 + 集合
+  → CreateFile(只读或固定只读查询所需访问权限, share read/write)
   → HidD_GetAttributes                  // VID/PID
   → HidD_GetPreparsedData + HidP_GetCaps
-  → 校验 usagePage=0xFF00, usage=0x0002, inputReportLength>=7
+  → 校验 usage page/usage 与报告长度
   → HidD_GetProductString / ManufacturerString
 ```
 
-只打开目标厂商集合；不枚举键盘/鼠标的标准 input 集合，不读取用户输入。
+| 厂商 | 路径过滤 | 打开方式 | caps 校验 |
+| --- | --- | --- | --- |
+| Rapoo | `vid_24ae&pid_1861`、`&mi_01&`、`&col05#` | `GENERIC_READ` | `0xFF00/0x0002`，input report ≥ 7 |
+| LINGBAO K98 | `vid_3554&pid_fa09`、`&mi_01&`、`&col01#` | 枚举用只读；读取用读写 | `0xFF02/0x0002`，input/output report ≥ 20 |
 
-### 报告
+只打开目标厂商集合；不枚举键盘/鼠标的标准 input 集合，不读取用户输入。K98 的读写句柄仅用于固定只读查询，`HidInterop` 不调用 `HidD_SetFeature` / `HidD_SetOutputReport`。
+
+### Rapoo 报告
 
 | 项 | 值 |
 | --- | --- |
@@ -450,13 +481,30 @@ SetupDiGetClassDevs(HID GUID, PRESENT | DEVICEINTERFACE)
 
 解析同时兼容带 `0xBB` report id（索引 6）和 `HidD_GetInputReport` 返回的 `0xB0` payload（索引 5），最后校验 0–100。
 
+### K98 报告
+
+| 项 | 值 |
+| --- | --- |
+| 接口 | `\\?\hid#vid_3554&pid_fa09&mi_01&col01#...` |
+| Top-level usage | `0xFF02 / 0x0002` |
+| Report 长度 | 20 字节（input/output 均 ≥ 20） |
+| 请求 | `13 4A 01` + 16 个 `0x00` + checksum；checksum 为前 19 字节字节和的低 8 位 |
+| 响应 | `13 4A 01 00 02 <battery> <status> ... <checksum>` |
+| 电量 | offset 5，取值 0–100 |
+| 充电状态 | offset 6 高半字节非零时为充电中 |
+| 唤醒查询 | 仅在上一次未收到响应时发送 `13 07`，不解析返回值、不写配置 |
+| 超时 | 写 500 ms，读 1500 ms（唤醒读 1000 ms）；最多 3 次尝试，间隔 80 ms |
+
+解析前校验 report id、命令、子命令与 checksum；电量 >100 或 checksum 不符视为无效响应，继续读到超时，不猜测、不改读 feature。每次读取都重新打开句柄并在结束时释放，不长期持有。
+
 ### 状态与生命周期
 
 - 枚举成功但没有目标设备 → 当前无 2.4G 设备；连续两轮缺失才移除旧条目。
 - HID 打开/读取失败 → 有旧值标 `Stale`，无旧值标 `Unavailable`；不阻塞 BLE 或其他设备。
 - 2.4G 读取排在 BLE 之前，避免慢 GATT 设备耗尽 30 秒单轮预算。
 - 蓝牙不可用（无适配器/关闭）时仍继续枚举和读取 2.4G；全局状态用 `Ready` + “蓝牙不可用；已检测到 2.4G 接收器设备”。
-- 厂商应用独占 HID 句柄时只读打开可能失败；下一轮自动重试。
+- 厂商应用独占 HID 句柄时打开可能失败；下一轮自动重试。
+- K98 的读写通过 overlapped I/O 实现超时；超时或退出时调用 `CancelIoEx` 中止未完成请求并释放句柄，不留下悬挂 I/O。
 
 ---
 
@@ -708,7 +756,7 @@ Tray menu "退出"
  ├─ App.RequestExit()
  ├─ _allowClose = true
  ├─ 取消服务 CTS，等待 StopAsync（≤3s）
- ├─ 释放 BLE 订阅、GATT 服务、设备对象
+ ├─ 释放 BLE 订阅、GATT 服务、设备对象与 K98 HID 句柄
  ├─ TrayIconService.Dispose()（移除托盘图标）
  ├─ MainWindow.Close()（允许关闭）
  └─ Application.Current.Shutdown()
@@ -787,10 +835,12 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 | --- | --- | --- | --- | --- |
 | 无蓝牙适配器 | `BluetoothAdapter.GetDefaultAsync()` 返回 null | — | 全局提示“未检测到蓝牙适配器”；若 2.4G 可用则显示其电量 | 仍枚举/读取 2.4G，定期重试蓝牙 |
 | 蓝牙关闭 | 枚举空 + Radio 状态 Off | 全部保留旧值 | 全局 `InfoBar` | 下一轮重试；2.4G 不受影响 |
-| 2.4G 接收器未插入 | SetupAPI 找不到 `24AE:1861/col05` | 连续 2 轮后移除 | 列表移除 | 不视为错误 |
+| 2.4G 接收器未插入 | SetupAPI 找不到 `24AE:1861/col05` 或 `3554:FA09/col01` | 连续 2 轮后移除 | 列表移除 | 不视为错误 |
 | 2.4G 接口被独占 | `CreateFile` 返回访问被拒 | `Stale`/`Unavailable` | “暂时不可达” | 只读共享打开；下轮重试；提示关闭厂商应用 |
-| 2.4G 报告无法解析 | 非 `0xB0/0xBB` 前缀或电量 >100 | `Stale`/`Unavailable` | 旧值或 `--` | Warn 日志，不写设备，不猜测 |
-| 2.4G 枚举失败 | SetupAPI/HID 异常 | 保留上一轮 | 不崩溃 | Warn 日志；不调用移除逻辑 |
+| Rapoo 报告无法解析 | 非 `0xB0/0xBB` 前缀或电量 >100 | `Stale`/`Unavailable` | 旧值或 `--` | Warn 日志，不写设备，不猜测 |
+| K98 响应无效 | 长度不足 20、report id/命令不符、checksum 不符或电量 >100 | `Stale`/`Unavailable` | 旧值或 `--` | Warn 日志；继续读到超时，不改读 feature、不写配置 |
+| K98 查询超时 | 写/读 overlapped 超过 500/1500 ms 或 3 次尝试均失败 | `Stale`/`Unavailable` | 旧值或 `--` | 取消 I/O、释放句柄；下轮重试 |
+| 2.4G 枚举失败 | SetupAPI/HID 异常，或单个厂商枚举失败 | 保留该厂商上一轮条目 | 不崩溃 | Warn 日志；不调用移除逻辑 |
 | 设备不可达 | `GattCommunicationStatus.Unreachable`、`COMException`（如 `0x800710DF` `ERROR_DEVICE_NOT_AVAILABLE`） | `Stale`/`Unavailable` | “暂时不可达” | 下轮重试，不立即重连 |
 | 访问被拒 | `UnauthorizedAccessException`、`0x80070005` | `Stale`/`Unavailable` | “暂时不可达” | 记录 Warn；可能需要在系统设置中检查权限/配对 |
 | 无电池服务 | 服务/特征值为空 | `NotSupported` | “不支持电量读取” | 每轮复查（设备固件可能动态暴露） |
@@ -861,7 +911,7 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 - 无网络访问、无遥测、无自动更新检查。
 - 设备列表仅存于内存；设置与日志仅本地。
 - 日志中的蓝牙地址掩码；设备名称保留（用于排查），文档提示用户分享日志前自行检查。
-- 2.4G 只记录产品名/厂商/VID/PID/失败阶段，不记录完整 HID 接口路径与报告缓冲区。
+- 2.4G 只记录产品名/厂商/VID/PID/失败阶段，不记录完整 HID 接口路径、报告缓冲区或 K98 查询内容。
 - 不请求管理员权限；不安装服务/驱动。
 - 非打包 Win32 应用不需要声明 `bluetooth` 能力；若未来改为 MSIX，必须添加 `bluetooth` 能力与相应 `DeviceCapability`，否则枚举/访问会被系统拒绝。
 
@@ -883,6 +933,7 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 | 10 | 最低系统 17763 | 所用 API 引入版本：配对选择器 10586、GATT 15063、`PresentationFormats` 15063、`GattSession` 15063 | 均 ≤ 17763；Mica 仅 Win11，运行时退化 |
 | 11 | `System.Devices.Aep.DeviceCategory` | `System.Devices.Aep.Category` | 前者不是有效规范键，传给 `FindAllAsync` 会抛 `COMException 0x8002802B` |
 | 12 | Rapoo 2.4G 电量查询 | 只读 `HidD_GetInputReport(0xBB)` | 官方应用与独立探测确认；不使用 `col04`/`0xBA`，不发送 output/config 报告 |
+| 13 | LINGBAO K98 2.4G 电量查询 | 20 字节固定查询 `13 4A 01 ...` + `ReadFile` 响应 | 厂商 `CDev3632::ReadPower` 与独立只读探测确认；不使用 feature `0x06`，不写配置 |
 
 > 若未来将 TFM 升到 .NET 10，可同时评估 H.NotifyIcon.Wpf 2.4.x、WPF-UI 新版，并重新跑手测矩阵。
 
@@ -918,7 +969,7 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 | BLE 策略 | 通知优先 + 全量轮询兜底 | 兼顾实时性与静默失效检测 |
 | 并发 | 单轮串行 | 降低 GATT 资源竞争与设备耗电 |
 | 状态 | LastKnown + 显式状态枚举 | UI 诚实表达，避免旧值伪装实时 |
-| Rapoo 2.4G | 独立 HID 传输 + 只读 `0xBB` | 协议已确认；不把 2.4G 归为蓝牙；绝不写配置集合 |
+| 2.4G（Rapoo / K98） | 独立 HID 传输 + 厂商专用只读协议 | Rapoo 只读 `0xBB`，K98 固定 `13 4A` 查询；不把 2.4G 归为蓝牙；绝不写配置集合 |
 | MVVM | 手写最小基类 | 减少依赖；本项目状态简单 |
 | 配置 | 本地 JSON | 无需注册表/数据库；易排查 |
 | 日志 | 自写轻量文件日志 | 避免引入 Serilog 等额外依赖 |

@@ -9,7 +9,7 @@ using Windows.Devices.Radios;
 namespace BlueMeter.Services;
 
 /// <summary>
-/// 已配对蓝牙设备与 Rapoo 2.4G 接收器枚举、电量读取、状态合并与刷新调度。
+/// 已配对蓝牙设备与 Rapoo / LINGBAO K98 2.4G 接收器枚举、电量读取、状态合并与刷新调度。
 /// 所有 GATT 操作串行执行；手动刷新只排队一次，避免并发访问蓝牙栈。
 /// </summary>
 public sealed class DeviceBatteryService : IDeviceBatteryService
@@ -34,8 +34,8 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
 
     private readonly SettingsService _settingsService;
     private readonly BleBatteryProbe _probe = new();
-    private readonly Rapoo24GDeviceEnumerator _hid24GEnumerator = new();
-    private readonly Rapoo24GProbe _hid24GProbe = new();
+    private readonly Hid24GDeviceEnumerator _hid24GEnumerator = new();
+    private readonly Hid24GProbe _hid24GProbe = new();
     private readonly object _stateLock = new();
     private readonly Dictionary<string, DeviceEntry> _devices = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _cycleGate = new(1, 1);
@@ -1015,7 +1015,12 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             entry.State.LastAttemptAt = now;
             entry.State.SupportsNotifications = result.SupportsNotifications;
 
-            if (!string.IsNullOrWhiteSpace(result.ChargingText))
+            if (entry.State.Transport == DeviceTransportKind.Hid24G)
+            {
+                // 2.4G 探针每次返回完整充电状态；不充电时必须清掉上一次的“充电中”。
+                entry.State.ChargingText = result.ChargingText;
+            }
+            else if (!string.IsNullOrWhiteSpace(result.ChargingText))
             {
                 entry.State.ChargingText = result.ChargingText;
             }
