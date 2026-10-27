@@ -6,9 +6,35 @@
 
 ### Added
 
-- 待实现：蓝牙设备枚举与 BLE 电量读取（M2）
 - 待实现：经典蓝牙电量、低电量通知与托盘摘要（M3）
-- 待实现：Fluent 主窗口、设备列表与设置（M4）
+- 待实现：Fluent 主窗口、完整设备列表与设置（M4）
+
+## [0.3.0] - 2026-10-27
+
+### Added
+
+- M2 领域模型：`BluetoothDeviceKind`、`BatteryReadStatus`、`DeviceBatteryState`、`DeviceBatterySnapshot`、`BatteryProbeResult`、`LowBatteryNotice`、`BluetoothServiceStatus`。
+- `BluetoothBatteryService`：BLE/经典已配对设备枚举、按蓝牙地址去重、同一设备优先 BLE、离线设备保留与移除、状态合并、结构化日志。
+- `BleBatteryProbe`：GATT 电池服务 `0x180F` / 电量特征值 `0x2A19`、`Uncached` 读取、`PresentationFormats` 指数缩放、0–100 校验、单设备超时。
+- BLE 通知订阅：Notify/Indicate CCCD、`ValueChanged` 解析、按设备保存、订阅上限 16、断连/15 分钟无通知/退出释放。
+- 刷新调度：`PeriodicTimer` + ±5 秒抖动、`SemaphoreSlim` 串行、单设备 8 秒、单轮 30 秒预算、手动刷新排队、睡眠恢复立即刷新。
+- 状态事件：`DevicesUpdated`、`LowBatteryDetected`、`StatusChanged`；失败保留旧值并标记 `Stale`，无旧值标记 `Unavailable`。
+- 低电量阈值判断与 `LowBatteryAlerted` 闩锁；M3 将消费事件并聚合为托盘气泡。
+- 主窗口轻量设备预览列表：名称、BLE/经典类型、连接/状态/更新时间、电量百分比；支持窗口内“立即刷新”。
+- 托盘“立即刷新”启用并接入服务；托盘 ToolTip 显示设备数、最低电量或无适配器/蓝牙关闭状态。
+- 退出流程等待设备服务最多 3 秒，正常释放 GATT 服务、设备与通知订阅。
+
+### Changed
+
+- 设备属性键由无效的 `System.Devices.Aep.DeviceCategory` 改为 `System.Devices.Aep.Category`，避免 `COMException 0x8002802B`。
+- 更新 README、ROADMAP、ARCHITECTURE、DEVELOPMENT 与 CHANGELOG 的 M2 状态、项目结构与验证说明。
+- 版本提升至 `0.3.0`。
+
+### Notes
+
+- M2 只读取 BLE 电量；经典蓝牙设备完成枚举与分类，真实电量读取留到 M3。
+- 当前开发机无蓝牙适配器，已验证空列表、无适配器状态、日志与退出路径；真实 BLE GATT 读取、睡眠唤醒和蓝牙开关切换需在有适配器的实机补验。
+- 主窗口当前为 M2 预览列表，完整 Fluent 列表、排序、设置与低电量通知在 M3/M4 完成。
 
 ## [0.2.0] - 2026-10-27
 

@@ -1,6 +1,8 @@
-﻿using System.Threading;
+﻿using System.Linq;
+using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
+using BlueMeter.Models;
 using BlueMeter.Services;
 
 namespace BlueMeter;
@@ -12,8 +14,10 @@ public partial class App : Application
     private Mutex? _singleInstanceMutex;
     private bool _ownsSingleInstanceMutex;
     private SettingsService? _settingsService;
+    private IBluetoothBatteryService? _bluetoothBatteryService;
     private TrayIconService? _trayIconService;
     private MainWindow? _mainWindow;
+    private CancellationTokenSource? _appCts;
     private int _exitRequested;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -52,6 +56,8 @@ public partial class App : Application
     {
         try
         {
+            _appCts?.Cancel();
+            _bluetoothBatteryService?.Dispose();
             _trayIconService?.Dispose();
             _settingsService?.Save();
             AppLog.Info("BlueMeter 已退出", "App");
@@ -62,6 +68,8 @@ public partial class App : Application
         }
         finally
         {
+            _appCts?.Dispose();
+            _appCts = null;
             ReleaseSingleInstance();
             base.OnExit(e);
         }
@@ -70,12 +78,22 @@ public partial class App : Application
     private void InitializeApplication()
     {
         _settingsService = new SettingsService();
+        _appCts = new CancellationTokenSource();
+
+        _bluetoothBatteryService = new BluetoothBatteryService(_settingsService);
+        _bluetoothBatteryService.DevicesUpdated += OnDevicesUpdated;
+        _bluetoothBatteryService.LowBatteryDetected += OnLowBatteryDetected;
+        _bluetoothBatteryService.StatusChanged += OnBluetoothStatusChanged;
+
         _trayIconService = new TrayIconService();
         _trayIconService.ShowRequested += OnShowRequested;
         _trayIconService.ExitRequested += OnExitRequested;
-        _trayIconService.SetToolTip("BlueMeter · 托盘已就绪");
+        _trayIconService.RefreshRequested += OnRefreshRequested;
+        _trayIconService.SetToolTip("BlueMeter · 正在扫描已配对设备…");
 
         _mainWindow = new MainWindow();
+        _mainWindow.RefreshRequested += OnRefreshRequested;
+        _mainWindow.SetGlobalStatus("正在读取已配对设备…");
 
         if (_settingsService.Current.StartMinimized)
         {
@@ -86,7 +104,9 @@ public partial class App : Application
             _mainWindow.Show();
         }
 
-        AppLog.Info("托盘、窗口与设置初始化完成", "App");
+        _ = _bluetoothBatteryService.StartAsync(_appCts.Token);
+
+        AppLog.Info("托盘、窗口、设置与设备服务初始化完成", "App");
     }
 
     private bool TryAcquireSingleInstance()
@@ -127,10 +147,106 @@ public partial class App : Application
         _mainWindow?.ShowAndActivate();
     }
 
-    private void OnRefreshRequested(object? sender, EventArgs e)
+    private async void OnRefreshRequested(object? sender, EventArgs e)
     {
-        // M2 接入设备扫描后，这里会触发一次排队刷新。
-        AppLog.Info("收到手动刷新请求；设备扫描尚未接入", "Tray");
+        if (_bluetoothBatteryService is null ||
+            _appCts is null ||
+            Volatile.Read(ref _exitRequested) != 0)
+        {
+            return;
+        }
+
+        _trayIconService?.SetRefreshBusy(true);
+        _mainWindow?.SetRefreshing(true);
+
+        try
+        {
+            await _bluetoothBatteryService.RefreshAsync(manual: true, _appCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // 退出或取消时忽略。
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("手动刷新失败", ex, "App");
+        }
+        finally
+        {
+            _trayIconService?.SetRefreshBusy(false);
+            _mainWindow?.SetRefreshing(false);
+        }
+    }
+
+    private void OnDevicesUpdated(
+        object? sender,
+        IReadOnlyList<DeviceBatterySnapshot> snapshots)
+    {
+        var threshold = _settingsService?.Current.LowBatteryThreshold ?? 20;
+        _mainWindow?.QueueDevicesUpdate(snapshots, threshold);
+
+        if (_bluetoothBatteryService?.Status is { State: BluetoothServiceState.NoAdapter or BluetoothServiceState.BluetoothOff } serviceStatus)
+        {
+            _trayIconService?.SetToolTip($"BlueMeter · {serviceStatus.Message}");
+            return;
+        }
+
+        _trayIconService?.SetToolTip(BuildTrayToolTip(snapshots));
+    }
+
+    private void OnBluetoothStatusChanged(
+        object? sender,
+        BluetoothServiceStatus status)
+    {
+        _mainWindow?.SetGlobalStatus(status.Message);
+
+        if (status.State is BluetoothServiceState.NoAdapter
+            or BluetoothServiceState.BluetoothOff
+            or BluetoothServiceState.Error)
+        {
+            _trayIconService?.SetToolTip($"BlueMeter · {status.Message}");
+        }
+    }
+
+    private void OnLowBatteryDetected(
+        object? sender,
+        IReadOnlyList<LowBatteryNotice> notices)
+    {
+        AppLog.Debug(
+            $"收到 {notices.Count} 条低电量事件，M3 将聚合为托盘通知",
+            "Battery");
+    }
+
+    private static string BuildTrayToolTip(
+        IReadOnlyList<DeviceBatterySnapshot> snapshots)
+    {
+        if (snapshots.Count == 0)
+        {
+            return "BlueMeter · 未发现已配对设备";
+        }
+
+        var withBattery = snapshots
+            .Where(snapshot => snapshot.BatteryPercent.HasValue)
+            .ToList();
+
+        if (withBattery.Count == 0)
+        {
+            return "BlueMeter · 已发现设备，暂无可读电量";
+        }
+
+        if (withBattery.Count == 1)
+        {
+            var snapshot = withBattery[0];
+            var suffix = snapshot.Status == BatteryReadStatus.Ok
+                ? string.Empty
+                : "（暂时不可达）";
+            return $"BlueMeter · {snapshot.Name} {snapshot.BatteryPercent}%{suffix}";
+        }
+
+        var lowest = withBattery.Min(snapshot => snapshot.BatteryPercent!.Value);
+        var hasStaleValue = withBattery.Any(snapshot => snapshot.Status != BatteryReadStatus.Ok);
+        return $"BlueMeter · {snapshots.Count} 台设备，最低 {lowest}%" +
+               (hasStaleValue ? "（含旧值）" : string.Empty);
     }
 
     private void OnExitRequested(object? sender, EventArgs e)
@@ -165,7 +281,7 @@ public partial class App : Application
         e.SetObserved();
     }
 
-    private void ExitApplication()
+    private async void ExitApplication()
     {
         if (Interlocked.Exchange(ref _exitRequested, 1) != 0)
         {
@@ -176,6 +292,33 @@ public partial class App : Application
 
         try
         {
+            _appCts?.Cancel();
+
+            if (_bluetoothBatteryService is not null)
+            {
+                var stopTask = _bluetoothBatteryService.StopAsync();
+                var completed = await Task.WhenAny(
+                    stopTask,
+                    Task.Delay(TimeSpan.FromSeconds(3)));
+
+                if (completed == stopTask)
+                {
+                    try
+                    {
+                        await stopTask;
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLog.Error("设备服务停止时出错", ex, "App");
+                    }
+                }
+                else
+                {
+                    AppLog.Warn("设备服务停止超时，执行强制释放", "App");
+                    _bluetoothBatteryService.Dispose();
+                }
+            }
+
             _settingsService?.Save();
             _trayIconService?.Dispose();
 
@@ -191,6 +334,8 @@ public partial class App : Application
         }
         finally
         {
+            _appCts?.Dispose();
+            _appCts = null;
             Shutdown();
         }
     }

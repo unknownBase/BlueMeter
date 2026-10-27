@@ -89,6 +89,8 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 | `SettingsService` | JSON 读写、默认值、校验、变更事件 | UI |
 | `AppLog` | 文件日志、滚动、脱敏 | 业务判断 |
 
+> 当前 `0.3.0`（M2）已实现 `BluetoothBatteryService`、`BleBatteryProbe` 与 M2 领域模型；主窗口暂用轻量预览列表，`MainViewModel`、`ClassicBatteryProbe`、`BatteryBar` 等留到 M3/M4。
+
 ---
 
 ## 4. 项目结构与命名空间
@@ -231,7 +233,7 @@ private static readonly string[] PropertyKeys =
     "System.Devices.Aep.DeviceAddress",
     "System.Devices.Aep.IsConnected",
     "System.Devices.Aep.Bluetooth.Le.IsConnectable",
-    "System.Devices.Aep.DeviceCategory",
+    "System.Devices.Aep.Category",
     "System.Devices.BatteryLife",
     "System.Devices.BatteryPlusCharging",
     "System.Devices.BatteryPlusChargingText",
@@ -256,6 +258,7 @@ var classicDevices = await DeviceInformation.FindAllAsync(classicSelector, Prope
 - 两个查询都可能返回 0 条；蓝牙关闭时通常返回空集合或抛异常，需作为全局状态处理。
 - `DeviceInformation.Name` 可能为空，回退为 `"未知设备"`；不要因此丢弃设备。
 - 不调用 `CreateWatcher` 做后台扫描；一期用“定时全量枚举”即可，配对设备数量有限。
+- 属性键必须使用规范名称。`System.Devices.Aep.DeviceCategory` 在 Windows 10/11 上会导致 `COMException 0x8002802B`；正确的是 `System.Devices.Aep.Category`。
 
 ### 6.2 分类
 
@@ -790,6 +793,7 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 | 8 | `0x2904` 指数缩放 | `GattCharacteristic.PresentationFormats` | 无需手动读描述符；取第一个格式的 `Exponent` |
 | 9 | 通知订阅 | `WriteClientCharacteristicConfigurationDescriptorAsync` | 需要特征值支持 Notify/Indicate；写 CCCD 后再订阅 `ValueChanged` |
 | 10 | 最低系统 17763 | 所用 API 引入版本：配对选择器 10586、GATT 15063、`PresentationFormats` 15063、`GattSession` 15063 | 均 ≤ 17763；Mica 仅 Win11，运行时退化 |
+| 11 | `System.Devices.Aep.DeviceCategory` | `System.Devices.Aep.Category` | 前者不是有效规范键，传给 `FindAllAsync` 会抛 `COMException 0x8002802B` |
 
 > 若未来将 TFM 升到 .NET 10，可同时评估 H.NotifyIcon.Wpf 2.4.x、WPF-UI 新版，并重新跑手测矩阵。
 

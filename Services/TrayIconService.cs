@@ -14,6 +14,7 @@ public sealed class TrayIconService : IDisposable
     private const int MaxToolTipLength = 120;
 
     private readonly TaskbarIcon _taskbarIcon;
+    private MenuItem? _refreshItem;
     private bool _disposed;
 
     public TrayIconService()
@@ -40,6 +41,8 @@ public sealed class TrayIconService : IDisposable
 
     public event EventHandler? ExitRequested;
 
+    public event EventHandler? RefreshRequested;
+
     public string ToolTipText => _taskbarIcon.ToolTipText ?? string.Empty;
 
     public void SetToolTip(string? text)
@@ -62,6 +65,28 @@ public sealed class TrayIconService : IDisposable
         }
 
         _taskbarIcon.ToolTipText = normalized;
+    }
+
+    public void SetRefreshBusy(bool busy)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!_taskbarIcon.Dispatcher.CheckAccess())
+        {
+            _taskbarIcon.Dispatcher.BeginInvoke(new Action(() => SetRefreshBusy(busy)));
+            return;
+        }
+
+        if (_refreshItem is null)
+        {
+            return;
+        }
+
+        _refreshItem.Header = busy ? "正在刷新…" : "立即刷新";
+        _refreshItem.IsEnabled = !busy;
     }
 
     public void ShowNotification(string message)
@@ -125,9 +150,16 @@ public sealed class TrayIconService : IDisposable
         var refreshItem = new MenuItem
         {
             Header = "立即刷新",
-            IsEnabled = false,
-            ToolTip = "设备扫描将在 M2 阶段接入",
+            ToolTip = "扫描已配对设备并读取 BLE 电量",
         };
+        refreshItem.Click += (_, _) =>
+        {
+            if (refreshItem.IsEnabled)
+            {
+                RefreshRequested?.Invoke(this, EventArgs.Empty);
+            }
+        };
+        _refreshItem = refreshItem;
 
         var exitItem = new MenuItem
         {

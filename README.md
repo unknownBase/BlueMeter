@@ -19,12 +19,13 @@ BlueMeter 是一个常驻 Windows 系统托盘的轻量桌面应用，用来汇�
 | 文档（README / 路线图 / 架构 / UI / 开发指南 / 贡献指南） | ✅ 已完成（`0.1.0-docs`） |
 | 工程配置与依赖 | ✅ 已完成（`0.2.0`） |
 | 托盘与窗口生命周期 | ✅ 已完成（`0.2.0`） |
-| BLE 电量读取 | ⏳ 待实施（M2） |
+| 已配对设备发现与 BLE/经典分类 | ✅ 已完成（`0.3.0`） |
+| BLE 电量读取与通知订阅 | ✅ 已完成（`0.3.0`） |
 | 经典蓝牙电量读取 | ⏳ 待实施（M3） |
-| Fluent 主窗口与列表 | ⏳ 待实施（M4） |
+| Fluent 主窗口与完整列表 | ⏳ 待实施（M4；当前为轻量预览列表） |
 | 低电量通知与稳定性加固 | ⏳ 待实施（M3/M5） |
 
-> 当前版本为 `0.2.0`：已完成 M1 工程配置、托盘、单实例、窗口生命周期、设置与日志骨架。运行后可看到托盘图标与占位主窗口；设备扫描与电量读取尚未接入，托盘菜单中的“立即刷新”暂为禁用占位。
+> 当前版本为 `0.3.0`：M1 的托盘与窗口生命周期保持可用；M2 已接入已配对 BLE/经典设备枚举、地址去重、BLE GATT 电量读取、通知订阅、刷新调度与状态事件。主窗口提供轻量设备预览列表，托盘“立即刷新”已启用。经典蓝牙真实电量读取、低电量托盘通知和完整 Fluent 列表分别留到 M3/M4。
 
 当前基线：
 
@@ -138,10 +139,11 @@ dotnet publish .\BlueMeter.csproj -c Release -r win-x64 --self-contained true
 | 操作 | 行为 |
 | --- | --- |
 | 左键单击托盘图标 | 显示并激活主窗口；若窗口最小化则先还原 |
-| 右键单击托盘图标 | 打开菜单：显示主窗口、立即刷新（M2 接入前禁用）、退出 |
+| 右键单击托盘图标 | 打开菜单：显示主窗口、立即刷新、退出 |
 | 关闭主窗口 | 取消关闭，隐藏窗口；托盘继续运行 |
 | 最小化主窗口 | 窗口保留在任务栏；托盘图标始终可见 |
-| 托盘菜单“退出” | 设置退出标志，保存设置、释放托盘与后续 GATT 资源，彻底结束进程 |
+| 托盘菜单“立即刷新” | 触发一轮手动扫描；若正在扫描则最多排队一次，不并发 |
+| 托盘菜单“退出” | 设置退出标志，保存设置、释放托盘与 BLE 订阅，彻底结束进程 |
 | 悬停托盘图标 | 显示一行摘要；完整设备列表在主窗口中 |
 
 托盘 ToolTip 受 Windows `NOTIFYICONDATA.szTip` 长度限制（约 127 字符），因此只显示摘要，不显示完整列表。
@@ -160,24 +162,36 @@ dotnet publish .\BlueMeter.csproj -c Release -r win-x64 --self-contained true
 
 ## 项目结构
 
-当前仓库（`0.2.0`）：
+当前仓库（`0.3.0`）：
 
 ```text
 BlueMeter/
 ├─ BlueMeter.sln
 ├─ BlueMeter.csproj
-├─ App.xaml / App.xaml.cs              # 组合根：单实例、托盘、窗口、异常、退出
-├─ MainWindow.xaml / MainWindow.xaml.cs # FluentWindow + 关闭隐藏
+├─ App.xaml / App.xaml.cs              # 组合根：单实例、托盘、服务、窗口、异常、退出
+├─ MainWindow.xaml / MainWindow.xaml.cs # FluentWindow + 轻量设备预览 + 关闭隐藏
 ├─ AssemblyInfo.cs
 ├─ app.manifest                        # Per-Monitor V2 DPI / Win10+ 兼容性
 ├─ Assets/
 │  └─ BlueMeter.ico                    # 16–256 多尺寸应用/托盘图标
 ├─ Models/
-│  └─ AppSettings.cs
+│  ├─ AppSettings.cs
+│  ├─ BluetoothDeviceKind.cs
+│  ├─ BatteryReadStatus.cs
+│  ├─ DeviceBatteryState.cs
+│  ├─ DeviceBatterySnapshot.cs
+│  ├─ BatteryProbeResult.cs
+│  ├─ LowBatteryNotice.cs
+│  └─ BluetoothServiceStatus.cs
 ├─ Services/
 │  ├─ AppLog.cs                        # 按天日志、7 天保留、地址脱敏
 │  ├─ SettingsService.cs               # JSON 原子读写、损坏回退
-│  └─ TrayIconService.cs               # TaskbarIcon、菜单、ToolTip、退出
+│  ├─ TrayIconService.cs               # TaskbarIcon、菜单、ToolTip、退出
+│  ├─ IBluetoothBatteryService.cs
+│  ├─ BluetoothBatteryService.cs       # 枚举、地址去重、调度、状态、事件
+│  └─ BleBatteryProbe.cs               # GATT 读取、CCCD 订阅、断连释放
+├─ ViewModels/
+│  └─ DeviceItemViewModel.cs           # M2 预览行模型
 ├─ README.md
 ├─ ROADMAP.md
 ├─ CONTRIBUTING.md
@@ -189,7 +203,7 @@ BlueMeter/
    └─ DEVELOPMENT.md
 ```
 
-目标结构（M2–M4 完成后）：
+目标结构（M3–M4 完成后）：
 
 ```text
 BlueMeter/
@@ -201,6 +215,10 @@ BlueMeter/
 │  ├─ BluetoothDeviceKind.cs
 │  ├─ BatteryReadStatus.cs
 │  ├─ DeviceBatteryState.cs
+│  ├─ DeviceBatterySnapshot.cs
+│  ├─ BatteryProbeResult.cs
+│  ├─ LowBatteryNotice.cs
+│  ├─ BluetoothServiceStatus.cs
 │  └─ AppSettings.cs
 ├─ Services/
 │  ├─ IBluetoothBatteryService.cs
@@ -242,6 +260,8 @@ BlueMeter/
 | --- | --- | --- |
 | Mica 仅 Windows 11 | Windows 10 上 WPF-UI 会退化为纯色/兼容背景 | 视觉差异，不影响功能 |
 | 经典蓝牙无统一电量 API | 仅部分设备在系统属性中暴露 `System.Devices.BatteryLife` | 部分耳机、手柄显示“不支持” |
+| 经典蓝牙读取尚未接入 | M2 只完成经典设备枚举与分类，真实电量读取在 M3 | 列表中经典设备显示“经典蓝牙电量待 M3 接入” |
+| 主窗口为 M2 预览列表 | 完整 Fluent 设备列表、电量条与设置页在 M4 | 当前仅提供名称、类型、状态与百分比 |
 | BLE 需要设备可连接且广播电量服务 | 设备休眠、被厂商软件独占、未暴露 `0x180F` 时读取失败 | 显示“暂时不可达”或“--” |
 | AirPods 等 Apple 设备 | 电量通常走私有 RFCOMM 协议 | 一期多数读不到，二期处理 |
 | 托盘提示长度 | Windows 限制约 127 字符 | 托盘只显示摘要 |
@@ -259,6 +279,7 @@ BlueMeter/
 | `BluetoothLEDevice.GetDeviceSelector()` / `BluetoothDevice.GetDeviceSelector()` | `GetDeviceSelectorFromPairingState(true)` | 明确只枚举已配对设备，语义与需求一致 |
 | `System.Devices.BatteryLifePercent` | `System.Devices.BatteryLife` | 系统属性键实际为 `BatteryLife`，类型 `Byte`，`101` 表示未知 |
 | `TaskbarIcon.ShowBalloonTip(...)` | `TaskbarIcon.ShowNotification(..., NotificationIcon.Warning)` | H.NotifyIcon 2.3.2 提供的是 `ShowNotification`，底层同样走托盘气泡 |
+| `System.Devices.Aep.DeviceCategory` | `System.Devices.Aep.Category` | 前者在 Windows 10/11 上不是有效规范键，传入 `FindAllAsync` 会抛 `COMException 0x8002802B` |
 | `BluetoothLEDevice.ConnectAsync()` | 通过 GATT 访问触发连接；必要时用 `GattSession.MaintainConnection` | `BluetoothLEDevice` 没有公开的 `ConnectAsync` 方法 |
 | `H.NotifyIcon.Wpf` 2.x 最新版 | 2.3.2 | 2.4.1 不含 net8 资产 |
 

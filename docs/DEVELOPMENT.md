@@ -75,7 +75,7 @@ Runtime: Microsoft.WindowsDesktop.App 8.0.31
     <RootNamespace>BlueMeter</RootNamespace>
     <ApplicationIcon>Assets\BlueMeter.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -353,6 +353,8 @@ Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Device
 | T28 | P1 | ToolTip 长度 | 设备名很长、多设备低电量 | ≤120 字符；摘要正确 |
 | T29 | P2 | 无适配器 | 虚拟机/禁用蓝牙适配器 | 显示“未检测到蓝牙适配器”；不崩溃 |
 | T30 | P1 | 多电池服务 | 双耳耳机等多服务设备 | 取第一个成功值；日志记录实例数 |
+
+> 当前 `0.3.0`（M2）：本机无蓝牙适配器，已覆盖 T29 的无适配器/空列表路径。T06、T07、T09、T10、T11、T15、T16 等 BLE 场景需在有适配器的实机补验；T08 的经典真实电量、T12–T14 的托盘气泡在 M3 完成。
 
 ### 低电量测试技巧
 

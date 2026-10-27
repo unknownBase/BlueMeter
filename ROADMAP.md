@@ -1,6 +1,6 @@
 # BlueMeter Roadmap
 
-版本策略：SemVer。`0.x` 允许接口和 UI 调整；`1.0.0` 表示一期范围全部达到验收标准。文档基线为 `0.1.0-docs`，当前代码版本为 `0.2.0`。
+版本策略：SemVer。`0.x` 允许接口和 UI 调整；`1.0.0` 表示一期范围全部达到验收标准。文档基线为 `0.1.0-docs`，当前代码版本为 `0.3.0`。
 
 状态图例：✅ 完成 ｜ 🚧 进行中 ｜ ⏳ 未开始 ｜ ⛔ 暂缓
 
@@ -12,7 +12,7 @@
 | --- | --- | --- | --- | --- |
 | M0 | `0.1.0-docs` | 需求梳理与文档基线 | ✅ | 已完成 |
 | M1 | `0.2.0` | 工程配置、托盘、窗口生命周期 | ✅ | 已完成 |
-| M2 | `0.3.0` | 设备发现与 BLE 电量读取 | ⏳ | 3–4 人日 |
+| M2 | `0.3.0` | 设备发现与 BLE 电量读取 | ✅ | 已完成 |
 | M3 | `0.4.0` | 经典蓝牙电量、低电量通知、托盘摘要 | ⏳ | 1–2 人日 |
 | M4 | `0.5.0` | Fluent 主窗口、列表与设置 | ⏳ | 2–3 人日 |
 | M5 | `0.9.0` | 稳定性、性能、兼容性加固 | ⏳ | 2–3 人日 |
@@ -43,7 +43,7 @@
 
 **目标**：应用能作为托盘程序稳定运行：关闭隐藏、左键还原、右键退出、单实例、主题跟随。
 
-> `0.2.0` 已完成。设备扫描与“立即刷新”的真实行为属于 M2；托盘菜单中该项当前为禁用占位。
+> `0.2.0` 已完成。设备扫描与“立即刷新”的真实行为已在 M2 接入；托盘“立即刷新”现已启用。
 
 ### 任务
 
@@ -98,50 +98,56 @@
 
 ---
 
-## M2 — 设备发现与 BLE 电量读取 ⏳
+## M2 — 设备发现与 BLE 电量读取 ✅
 
 **目标**：正确分类已配对设备，稳定读取 BLE 电量，失败时保留状态。
 
 ### 任务
 
-- [ ] **M2-1 领域模型**
+- [x] **M2-1 领域模型**
   - `BluetoothDeviceKind`（Ble / Classic）
   - `BatteryReadStatus`（Unknown / Reading / Ok / Stale / Unavailable / NotSupported）
-  - `DeviceBatteryState`：Id、Address、Name、Kind、BatteryPercent、LastSuccessAt、LastAttemptAt、IsConnected、Status、AlertLatch
-- [ ] **M2-2 设备枚举**
+  - `DeviceBatteryState`：Id、Address、Name、Kind、BatteryPercent、LastSuccessAt、LastAttemptAt、IsConnected、Status、SupportsNotifications、ChargingText、LowBatteryAlerted
+- [x] **M2-2 设备枚举**
   - BLE：`DeviceInformation.FindAllAsync(BluetoothLEDevice.GetDeviceSelectorFromPairingState(true), keys)`
   - 经典：`DeviceInformation.FindAllAsync(BluetoothDevice.GetDeviceSelectorFromPairingState(true), keys)`
-  - 请求属性：`System.Devices.Aep.DeviceAddress`、`System.Devices.Aep.IsConnected`、`System.Devices.BatteryLife`、`System.Devices.BatteryPlusChargingText` 等
+  - 请求属性：`System.Devices.Aep.DeviceAddress`、`System.Devices.Aep.IsConnected`、`System.Devices.Aep.Category`、`System.Devices.BatteryLife`、`System.Devices.BatteryPlusChargingText` 等
   - 空名称回退为“未知设备”并保留；过滤明显非设备的条目
   - 保留离线设备以显示上次值
   - 按蓝牙地址去重，同一设备同时出现在两类列表时优先 BLE
-- [ ] **M2-3 BLE 读取**
+- [x] **M2-3 BLE 读取**
   - `BluetoothLEDevice.FromIdAsync` → `GetGattServicesForUuidAsync(GattServiceUuids.Battery, Uncached)`
   - 获取 `GattCharacteristicUuids.BatteryLevel` 特征值
   - `ReadValueAsync(Uncached)`，取第一个字节；必要时用 `PresentationFormats` 的指数缩放
   - 校验 0–100，非法值视为读取失败
   - 所有 `IAsyncOperation` 通过 `AsTask(ct)` 加超时
-- [ ] **M2-4 通知订阅**
+- [x] **M2-4 通知订阅**
   - 特征值支持 Notify/Indicate 时写入 CCCD
   - 订阅 `ValueChanged`，回调解析电量并更新状态
-  - 订阅对象按设备保存；断连/停止时释放
+  - 订阅对象按设备保存；断连/15 分钟无通知/蓝牙关闭/停止时释放；订阅上限 16
   - 不支持通知的设备走轮询
-- [ ] **M2-5 刷新调度**
+- [x] **M2-5 刷新调度**
   - `PeriodicTimer`，默认 45 秒，±5 秒抖动
   - `SemaphoreSlim(1,1)` 保证单轮串行、禁止重入
   - 单设备超时 8 秒；单轮总预算 30 秒，超预算设备跳过并保留旧值
   - 手动刷新：若正在扫描则排队一次，不并发
   - 系统从睡眠恢复后立即刷新一轮
-- [ ] **M2-6 状态与事件**
+- [x] **M2-6 状态与事件**
   - `DevicesUpdated`（每次设备状态变化 + 每轮结束）
-  - 结构化失败日志（设备、阶段、错误码），不向 UI 抛异常
+  - 结构化失败日志（设备、阶段、状态/错误码），不向 UI 抛异常
   - `LowBatteryDetected`（M3 消费）
-  - 失败且已有旧值 → `Stale`；无旧值 → `Unavailable`
-  - 超过 3 个周期没有成功读取 → 保持 `Stale`
-- [ ] **M2-7 资源释放**
+  - 失败且已有旧值 → `Stale`；无旧值 → `Unavailable`；后续周期保持该状态直到恢复
+- [x] **M2-7 资源释放**
   - 未建立订阅的读取在当轮结束释放 `GattDeviceService` / `BluetoothLEDevice`
   - 订阅中的设备保留对象，断连/超时/退出时释放
   - 退出流程最多等待 3 秒，不阻塞进程结束
+
+### 实现说明
+
+- 设备属性键使用有效的 `System.Devices.Aep.Category`；`System.Devices.Aep.DeviceCategory` 会导致 `COMException 0x8002802B`，已从实现和文档中移除。
+- 当前机器无蓝牙适配器，已验证空设备列表、无适配器状态、日志与退出路径；真实 BLE 设备的 GATT 读取需在有适配器的 Windows 11/10 实机补验。
+- M2 只读取 BLE 电量；经典设备完成枚举、分类与地址去重，真实电量读取按计划留到 M3。
+- 主窗口本阶段提供轻量设备预览列表，用于观察 M2 结果；完整 Fluent 列表、排序与设置页在 M4 完成。
 
 ### 验收
 
@@ -152,11 +158,15 @@
 5. 睡眠唤醒、蓝牙开关切换后能自动恢复读取。
 6. 20 台模拟/真实设备下，单轮扫描不重叠、UI 不卡顿。
 
+> 验收状态：代码路径与无适配器环境已验证；真实 BLE 电量、睡眠唤醒、蓝牙开关切换和 2 小时资源稳定性仍需在有蓝牙适配器的实机补验。
+
 ---
 
 ## M3 — 经典蓝牙、低电量通知与托盘摘要 ⏳
 
 **目标**：补齐系统属性可读的经典设备；低电量只提醒一次；托盘摘要准确。
+
+> M2 已在服务层实现低电量阈值判断、`LowBatteryAlerted` 闩锁与 `LowBatteryDetected` 事件；M3 继续负责经典蓝牙读取、通知聚合和托盘气泡。
 
 ### 任务
 
