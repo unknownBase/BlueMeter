@@ -6,6 +6,8 @@
 
 ### Added
 
+- 采用仓库已有的 MIT 许可，补齐 README 许可说明与链接。
+- 新增 `CONTRIBUTING.md`：单行 Conventional Commits 规范（`type: 中文简述`）、type 枚举、示例与提交前检查。
 - 待实现：托盘常驻与窗口生命周期（M1）
 - 待实现：蓝牙设备枚举与 BLE 电量读取（M2）
 - 待实现：经典蓝牙电量、低电量通知与托盘摘要（M3）

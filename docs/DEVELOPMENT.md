@@ -446,7 +446,8 @@ dotnet format .\BlueMeter.csproj --verify-no-changes   # 如已配置 dotnet for
 ```
 
 - 确认没有把 `bin/`、`obj/`、`.vs/`、日志、设置文件提交进仓库。
-- 如仓库后续初始化 Git，建议补充 `.gitignore`（VS 的 `VisualStudio.gitignore` 模板即可）。
+- Git 提交采用单行 Conventional Commits：`type: 中文简述`，不带 body；完整规则与示例见 [CONTRIBUTING.md](../CONTRIBUTING.md#2-git-提交规范)。
+- 一个提交只做一件事；不要混入无关格式化或重构。
 
 ---
 
@@ -483,3 +484,4 @@ dotnet format .\BlueMeter.csproj --verify-no-changes   # 如已配置 dotnet for
 - 接口/状态/线程模型变化：更新 [docs/ARCHITECTURE.md](ARCHITECTURE.md)。
 - 视觉/文案变化：更新 [docs/UI-SPEC.md](UI-SPEC.md)。
 - 版本/依赖/构建方式变化：更新本文件与 README。
+- 协作/提交规范变化：更新 [CONTRIBUTING.md](../CONTRIBUTING.md)。

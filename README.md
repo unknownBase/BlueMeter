@@ -1,5 +1,7 @@
 # BlueMeter
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > 把每一只蓝牙鼠标、键盘、耳机和手柄的电量，安静地放进系统托盘。
 
 BlueMeter 是一个常驻 Windows 系统托盘的轻量桌面应用，用来汇总本机**已配对蓝牙设备**的电量。它同时覆盖 BLE（低功耗蓝牙）与经典蓝牙（BR/EDR），能读到的设备显示实时电量，读不到的设备保留上次成功值并标注“暂时不可达”。
@@ -218,6 +220,7 @@ BlueMeter/
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 分层与组件、设备发现、BLE/经典读取流程、状态机、线程模型、错误处理、API 事实核对 |
 | [docs/UI-SPEC.md](docs/UI-SPEC.md) | 窗口布局、列表项解剖、状态文案、低电量高亮、托盘菜单与气泡、无障碍 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 环境准备、构建发布、运行前检查、手测矩阵、故障排查、编码约定 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 分支协作、Conventional Commits 提交规范、提交前检查 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更记录 |
 
 ---
@@ -262,4 +265,12 @@ BlueMeter/
 
 ## 许可
 
-许可证待定（TBD）。在补充 `LICENSE` 之前，默认保留所有权利。
+本项目采用 [MIT License](LICENSE)。
+
+```text
+MIT License
+
+Copyright (c) 2026 djw
+```
+
+可以自由使用、修改、分发和再许可，但需保留版权声明与许可声明。项目按“现状”提供，不附带任何明示或暗示的担保。
