@@ -470,12 +470,16 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
                 failureCount++;
             }
 
+            // 2.4G 失败时保留旧值并每轮重试；日志只在连续失败的第一轮告警，
+            // 避免设备休眠时每轮刷一条 Warn。
+            var shouldWarnFailure = RecordHidHealth(entry, result);
+
             ApplyProbeResult(entry, result, notices);
             PublishSnapshots();
 
             if (!result.IsSuccess)
             {
-                LogProbeFailure(entry, result);
+                LogHidProbeFailure(entry, result, shouldWarnFailure);
             }
         }
 
@@ -661,12 +665,17 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         PublishSnapshots();
         RaiseLowBatteryDetected(notices);
 
+        var hidHealthText = hidReadTargets.Count == 0
+            ? string.Empty
+            : $"，{BuildHidHealthText(hidReadTargets)}";
+
         AppLog.Info(
             $"第 {cycleNumber} 轮完成：{Current.Count} 台设备，" +
             $"{readTargets.Count} 台 BLE，{hidReadTargets.Count} 台 2.4G，" +
             $"{classicReadTargets.Count} 台经典蓝牙，" +
             $"{successCount} 成功，{failureCount} 失败，" +
-            $"{skippedCount} 跳过，用时 {stopwatch.Elapsed.TotalSeconds:0.0} 秒",
+            $"{skippedCount} 跳过，用时 {stopwatch.Elapsed.TotalSeconds:0.0} 秒" +
+            hidHealthText,
             "Cycle");
     }
 
@@ -1387,6 +1396,77 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         }
     }
 
+    /// <summary>
+    /// 记录 2.4G 读取健康度：成功时清零连续失败，并从失败中恢复时记一条 Info；
+    /// 失败时返回 true 表示这是连续失败的第一轮，需要按 Warn 记录。
+    /// </summary>
+    private static bool RecordHidHealth(DeviceEntry entry, BatteryProbeResult result)
+    {
+        var health = entry.Health;
+        if (result.IsSuccess)
+        {
+            var previousFailures = health.ConsecutiveFailures;
+            if (health.RecordSuccess() && previousFailures > 0)
+            {
+                AppLog.Info(
+                    $"{entry.State.Name} 2.4G 读取已恢复（此前连续 {previousFailures} 次失败）",
+                    "Hid24G");
+            }
+
+            return false;
+        }
+
+        if (result.Status == BatteryReadStatus.NotSupported)
+        {
+            return false;
+        }
+
+        return health.RecordFailure();
+    }
+
+    private static void LogHidProbeFailure(
+        DeviceEntry entry,
+        BatteryProbeResult result,
+        bool shouldWarn)
+    {
+        var failures = result.Status == BatteryReadStatus.NotSupported
+            ? 0
+            : entry.Health.ConsecutiveFailures;
+        var message =
+            $"{entry.State.Name}（{KindText(entry.State.Transport)}）电量读取失败：" +
+            $"{result.FailureStage} {result.FailureMessage}" +
+            (failures > 1 ? $"（连续第 {failures} 次）" : string.Empty);
+
+        if (shouldWarn)
+        {
+            AppLog.Warn(message, "Hid24G");
+        }
+        else
+        {
+            AppLog.Debug(message, "Hid24G");
+        }
+    }
+
+    /// <summary>轮次日志用的 2.4G 累计成功率，便于对比修复前后的读取稳定性。</summary>
+    private static string BuildHidHealthText(List<DeviceEntry> entries)
+    {
+        long attempts = 0;
+        long failures = 0;
+        foreach (var entry in entries)
+        {
+            attempts += entry.Health.TotalAttempts;
+            failures += entry.Health.TotalFailures;
+        }
+
+        if (attempts == 0)
+        {
+            return "2.4G 累计暂无数据";
+        }
+
+        return $"2.4G 累计 {attempts - failures}/{attempts} 次成功，" +
+            $"失败率 {(double)failures / attempts * 100:0.0}%";
+    }
+
     private void PublishSnapshots()
     {
         IReadOnlyList<DeviceBatterySnapshot> snapshots;
@@ -1684,6 +1764,9 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         public Hid24GDeviceInfo? HidSource { get; set; }
 
         public int MissedCycles { get; set; }
+
+        /// <summary>2.4G 读取的连续失败与累计统计；日志降噪与轮次失败率都用它。</summary>
+        public ProbeHealthTracker Health { get; } = new();
     }
 
     private sealed record EnumerationResult(

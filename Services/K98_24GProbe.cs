@@ -22,11 +22,7 @@ public sealed class K98_24GProbe
     private const int BatteryOffset = 5;
     private const int StatusOffset = 6;
     private const int ChecksumOffset = 19;
-    private const int WriteTimeoutMilliseconds = 500;
-    private const int ReadTimeoutMilliseconds = 1500;
-    private const int WakeReadTimeoutMilliseconds = 1000;
-    private const int AttemptCount = 3;
-    private const int RetryDelayMilliseconds = 80;
+    private const int DeadlineSliceMilliseconds = 200;
     private const int ErrorTimeout = 1460;
 
     public BatteryProbeResult ReadBattery(
@@ -48,89 +44,181 @@ public sealed class K98_24GProbe
         {
             var request = BuildRequest(PowerCommand);
             var response = new byte[ReportLength];
+            var startedAt = Environment.TickCount64;
+            var budgetDeadline = startedAt + K98RetrySchedule.TotalBudgetMilliseconds;
+            var lastWriteError = 0;
 
-            for (var attempt = 0; attempt < AttemptCount; attempt++)
+            for (var attempt = 0; attempt < K98RetrySchedule.AttemptCount; attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                if (Environment.TickCount64 >= budgetDeadline)
+                {
+                    break;
+                }
 
                 if (!HidInterop.TryWriteReport(
                         handle,
                         request,
-                        WriteTimeoutMilliseconds,
+                        K98RetrySchedule.WriteTimeoutMilliseconds,
                         cancellationToken,
                         out var writeError))
                 {
-                    if (attempt + 1 < AttemptCount)
-                    {
-                        cancellationToken.WaitHandle.WaitOne(RetryDelayMilliseconds);
-                        continue;
-                    }
-
-                    return BatteryProbeResult.Unavailable(
-                        "HidWrite",
-                        $"K98 2.4G 电量查询发送失败（Win32={writeError}）");
-                }
-
-                var deadline = Environment.TickCount64 + ReadTimeoutMilliseconds;
-                while (true)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    var remaining = (int)(deadline - Environment.TickCount64);
-                    if (remaining <= 0)
+                    lastWriteError = writeError;
+                    if (!WaitBeforeRetry(handle, attempt, budgetDeadline, cancellationToken))
                     {
                         break;
                     }
 
-                    if (!HidInterop.TryReadReport(
-                            handle,
-                            response,
-                            remaining,
-                            cancellationToken,
-                            out var bytesRead,
-                            out var readError))
-                    {
-                        if (readError == ErrorTimeout)
-                        {
-                            break;
-                        }
-
-                        return BatteryProbeResult.Unavailable(
-                            "HidRead",
-                            $"K98 2.4G 电量响应读取失败（Win32={readError}）");
-                    }
-
-                    if (TryParseBattery(
-                            response.AsSpan(0, bytesRead),
-                            out var batteryPercent,
-                            out var charging))
-                    {
-                        return BatteryProbeResult.Ok(
-                            batteryPercent,
-                            supportsNotifications: false,
-                            charging ? "充电中" : null);
-                    }
-
-                    // 可能是上一条命令的迟到响应或设备主动上报，继续读到超时。
+                    continue;
                 }
 
-                if (attempt + 1 < AttemptCount)
+                lastWriteError = 0;
+
+                var result = TryReadBatteryOnce(
+                    handle,
+                    response,
+                    request,
+                    attempt,
+                    budgetDeadline,
+                    cancellationToken);
+                if (result is not null)
                 {
-                    if (attempt == 0)
-                    {
-                        // 设备刚上电/刚从省电状态恢复时，先发厂商枚举阶段使用的
-                        // 只读版本查询，帮助接收器唤醒；不解析、不修改任何配置。
-                        TryWakeUp(handle, cancellationToken);
-                    }
-
-                    cancellationToken.WaitHandle.WaitOne(RetryDelayMilliseconds);
+                    return result;
                 }
+
+                if (!WaitBeforeRetry(handle, attempt, budgetDeadline, cancellationToken))
+                {
+                    break;
+                }
+            }
+
+            if (lastWriteError != 0)
+            {
+                return BatteryProbeResult.Unavailable(
+                    "HidWrite",
+                    $"K98 2.4G 电量查询发送失败（Win32={lastWriteError}，" +
+                    $"用时 {(Environment.TickCount64 - startedAt) / 1000.0:0.0} 秒）");
             }
 
             return BatteryProbeResult.Unavailable(
                 "HidRead",
-                "未收到 K98 2.4G 电量响应");
+                $"未收到 K98 2.4G 电量响应（{K98RetrySchedule.AttemptCount} 次尝试，" +
+                $"用时 {(Environment.TickCount64 - startedAt) / 1000.0:0.0} 秒）");
         }
+    }
+
+    /// <summary>
+    /// 单次尝试：发送查询后按切片读取，直到本尝试截止。命中返回结果，
+    /// 超时返回 null 交给下一次尝试；非超时读错误直接返回失败，避免掩盖真实错误。
+    /// 首条查询可能被接收器丢弃，因此在本尝试内补发一次（只补发一次）。
+    /// </summary>
+    private static BatteryProbeResult? TryReadBatteryOnce(
+        SafeFileHandle handle,
+        byte[] response,
+        byte[] request,
+        int attempt,
+        long budgetDeadline,
+        CancellationToken cancellationToken)
+    {
+        var now = Environment.TickCount64;
+        var budgetRemaining = (int)Math.Max(0, budgetDeadline - now);
+        var deadline = now + Math.Min(
+            K98RetrySchedule.ReadTimeoutMilliseconds(attempt),
+            budgetRemaining);
+        var nextResendAt = now + K98RetrySchedule.QuickResendIntervalMilliseconds;
+        var resendCount = 0;
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            now = Environment.TickCount64;
+            if (now >= deadline)
+            {
+                return null;
+            }
+
+            if (resendCount < K98RetrySchedule.MaxResendPerAttempt && now >= nextResendAt)
+            {
+                resendCount++;
+                HidInterop.TryWriteReport(
+                    handle,
+                    request,
+                    K98RetrySchedule.WriteTimeoutMilliseconds,
+                    cancellationToken,
+                    out _);
+                nextResendAt = Environment.TickCount64 +
+                    K98RetrySchedule.QuickResendIntervalMilliseconds;
+            }
+
+            var slice = (int)Math.Min(DeadlineSliceMilliseconds, deadline - now);
+            if (!HidInterop.TryReadReport(
+                    handle,
+                    response,
+                    slice,
+                    cancellationToken,
+                    out var bytesRead,
+                    out var readError))
+            {
+                if (readError == ErrorTimeout)
+                {
+                    continue;
+                }
+
+                return BatteryProbeResult.Unavailable(
+                    "HidRead",
+                    $"K98 2.4G 电量响应读取失败（Win32={readError}，第 {attempt + 1} 次尝试）");
+            }
+
+            if (TryParseBattery(
+                    response.AsSpan(0, bytesRead),
+                    out var batteryPercent,
+                    out var charging))
+            {
+                return BatteryProbeResult.Ok(
+                    batteryPercent,
+                    supportsNotifications: false,
+                    charging ? "充电中" : null);
+            }
+
+            // 可能是上一条命令的迟到响应或设备主动上报，继续读到本尝试超时。
+        }
+    }
+
+    /// <summary>
+    /// 尝试间退避后发送一次只读版本查询唤醒接收器。返回 false 表示预算已用尽，不再尝试。
+    /// </summary>
+    private static bool WaitBeforeRetry(
+        SafeFileHandle handle,
+        int attempt,
+        long budgetDeadline,
+        CancellationToken cancellationToken)
+    {
+        // 已经是最后一次尝试，不再退避与唤醒。
+        if (attempt + 1 >= K98RetrySchedule.AttemptCount)
+        {
+            return false;
+        }
+
+        var remaining = (int)(budgetDeadline - Environment.TickCount64);
+        if (remaining <= 0)
+        {
+            return false;
+        }
+
+        var delay = Math.Min(K98RetrySchedule.RetryDelayMilliseconds(attempt), remaining);
+        if (delay > 0 && cancellationToken.WaitHandle.WaitOne(delay))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // 设备刚从省电状态恢复时，先发厂商枚举阶段使用的只读版本查询，
+        // 帮助接收器唤醒；不解析、不修改任何配置。
+        TryWakeUp(handle, budgetDeadline, cancellationToken);
+        return Environment.TickCount64 < budgetDeadline;
     }
 
     /// <summary>
@@ -171,13 +259,14 @@ public sealed class K98_24GProbe
 
     private static void TryWakeUp(
         SafeFileHandle handle,
+        long budgetDeadline,
         CancellationToken cancellationToken)
     {
         var request = BuildRequest(VersionCommand);
         if (!HidInterop.TryWriteReport(
                 handle,
                 request,
-                WriteTimeoutMilliseconds,
+                K98RetrySchedule.WriteTimeoutMilliseconds,
                 cancellationToken,
                 out _))
         {
@@ -185,7 +274,10 @@ public sealed class K98_24GProbe
         }
 
         var response = new byte[ReportLength];
-        var deadline = Environment.TickCount64 + WakeReadTimeoutMilliseconds;
+        var remainingBudget = (int)Math.Max(0, budgetDeadline - Environment.TickCount64);
+        var deadline = Environment.TickCount64 + Math.Min(
+            K98RetrySchedule.WakeReadTimeoutMilliseconds,
+            remainingBudget);
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();

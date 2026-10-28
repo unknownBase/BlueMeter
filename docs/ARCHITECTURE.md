@@ -96,12 +96,13 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 | `Rapoo24GDeviceEnumerator` | 枚举 Rapoo 2.4G `24AE:1861` 的 `MI_01/COL05` HID 接口、校验 caps | 读取电量 |
 | `Rapoo24GProbe` | `HidD_GetInputReport(0xBB)` 只读电量解析 | 发送配置/输出报告 |
 | `K98_24GDeviceEnumerator` | 枚举 LINGBAO K98 2.4G `3554:FA09` 的 `MI_01/COL01` HID 接口、校验 caps | 读取电量 |
-| `K98_24GProbe` | 固定 `13 4A` 只读查询、校验 checksum、解析电量/充电状态 | 写配置、feature `0x06` 猜测 |
+| `K98_24GProbe` | 固定 `13 4A` 只读查询、校验 checksum、解析电量/充电状态；`K98RetrySchedule` 控制重试（4 次尝试、递增读超时、重发前 `13 07` 唤醒、6.5 秒预算） | 写配置、feature `0x06` 猜测 |
 | `Hid24GDeviceEnumerator` | 合并 Rapoo/K98 枚举结果，保留单厂商失败状态 | 解析电量 |
 | `Hid24GProbe` | 按 `Hid24GProtocol` 分派厂商探针 | 共享命令格式 |
 | `HidInterop` | SetupAPI/HID P/Invoke、caps/字符串、K98 固定查询的 overlapped 读写 | 写配置/设置 |
 | `SettingsService` | JSON 读写、默认值、校验、变更事件 | UI |
 | `AppLog` | 文件日志、滚动、脱敏 | 业务判断 |
+| `ProbeHealthTracker` | 单台探针的连续失败与累计成功率；HID 失败日志降噪与轮次统计 | 业务读取逻辑 |
 
 > 当前 `0.3.1` 已实现 `DeviceBatteryService`、`BleBatteryProbe`、`Rapoo24GDeviceEnumerator`、`Rapoo24GProbe`、`K98_24GDeviceEnumerator`、`K98_24GProbe`、合并分派器与 M2 领域模型；主窗口暂用轻量预览列表，`MainViewModel`、`ClassicBatteryProbe`、`BatteryBar` 等留到 M3/M4。
 
@@ -121,6 +122,9 @@ BlueMeter/
 │  ├─ DeviceBatteryState.cs
 │  ├─ DeviceBatterySnapshot.cs
 │  ├─ BatteryProbeResult.cs
+│  ├─ K98RetrySchedule.cs
+│  ├─ ProbeHealthTracker.cs
+│  ├─ RefreshIntervalConverter.cs
 │  └─ AppSettings.cs
 ├─ Services/                     namespace BlueMeter.Services
 │  ├─ IDeviceBatteryService.cs
