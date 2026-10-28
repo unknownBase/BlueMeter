@@ -14,6 +14,7 @@ public partial class App : Application
     private Mutex? _singleInstanceMutex;
     private bool _ownsSingleInstanceMutex;
     private SettingsService? _settingsService;
+    private StartupRegistrationService? _startupRegistration;
     private IDeviceBatteryService? _deviceBatteryService;
     private TrayIconService? _trayIconService;
     private LowBatteryNotifier? _lowBatteryNotifier;
@@ -82,6 +83,10 @@ public partial class App : Application
         _settingsService = new SettingsService();
         _appCts = new CancellationTokenSource();
 
+        // 设置里开着开机启动但注册表没有（重装/换路径）时补齐，关着但残留时清掉。
+        _startupRegistration = new StartupRegistrationService();
+        _startupRegistration.Reconcile(_settingsService.Current.RunAtStartup);
+
         _deviceBatteryService = new DeviceBatteryService(_settingsService);
         _deviceBatteryService.DevicesUpdated += OnDevicesUpdated;
         _deviceBatteryService.LowBatteryDetected += OnLowBatteryDetected;
@@ -99,6 +104,9 @@ public partial class App : Application
 
         _mainWindow = new MainWindow();
         _mainWindow.RefreshRequested += OnRefreshRequested;
+        _mainWindow.SettingsFilePath = _settingsService.SettingsPath;
+        _mainWindow.SettingsEditRequested += OnSettingsEditRequested;
+        _mainWindow.ApplySettings(_settingsService.Current);
         _mainWindow.SetGlobalStatus("正在读取已配对设备与 2.4G 接收器…");
 
         if (_settingsService.Current.StartMinimized)
@@ -195,8 +203,7 @@ public partial class App : Application
         object? sender,
         IReadOnlyList<DeviceBatterySnapshot> snapshots)
     {
-        var threshold = _settingsService?.Current.LowBatteryThreshold ?? 20;
-        _mainWindow?.QueueDevicesUpdate(snapshots, threshold);
+        _mainWindow?.QueueDevicesUpdate(snapshots);
 
         var hasHid24G = snapshots.Any(
             snapshot => snapshot.Transport == DeviceTransportKind.Hid24G);
@@ -236,6 +243,39 @@ public partial class App : Application
         IReadOnlyList<LowBatteryNotice> notices)
     {
         _lowBatteryNotifier?.Notify(notices);
+    }
+
+    /// <summary>
+    /// 设置面板的修改在这里落盘，并处理需要外部副作用的项（开机启动写注册表）。
+    /// 保存或注册表写入失败时回滚到旧值，避免界面与磁盘/系统状态不一致。
+    /// </summary>
+    private void OnSettingsEditRequested(object? sender, Action<AppSettings> edit)
+    {
+        var service = _settingsService;
+        if (service is null || edit is null)
+        {
+            return;
+        }
+
+        var previousRunAtStartup = service.Current.RunAtStartup;
+
+        if (!service.Update(edit))
+        {
+            AppLog.Warn("设置保存失败，已放弃本次修改", "Settings");
+            _trayIconService?.ShowNotification("设置保存失败，已恢复为原值。");
+            _mainWindow?.ApplySettings(service.Current);
+            return;
+        }
+
+        var current = service.Current;
+        if (current.RunAtStartup != previousRunAtStartup &&
+            _startupRegistration?.TrySetEnabled(current.RunAtStartup) == false)
+        {
+            service.Update(settings => settings.RunAtStartup = previousRunAtStartup);
+            _trayIconService?.ShowNotification("开机启动设置失败，请检查系统权限。");
+        }
+
+        _mainWindow?.ApplySettings(service.Current);
     }
 
     private void OnExitRequested(object? sender, EventArgs e)

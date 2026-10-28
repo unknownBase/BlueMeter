@@ -1573,7 +1573,11 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             _settingsService.Current.RefreshIntervalSeconds,
             AppSettings.MinRefreshIntervalSeconds,
             AppSettings.MaxRefreshIntervalSeconds);
-        var jitter = Random.Shared.Next(-5, 6);
+
+        // 抖动按间隔的 10% 取，并限制在 1–60 秒：10 秒轮询不会被 ±5 秒的固定抖动拖成 15 秒，
+        // 小时级间隔也不会因为抖动太小而和其他实例同步。
+        var jitterRange = Math.Clamp((int)Math.Ceiling(interval * 0.1), 1, 60);
+        var jitter = Random.Shared.Next(-jitterRange, jitterRange + 1);
         return TimeSpan.FromSeconds(Math.Max(5, interval + jitter));
     }
 

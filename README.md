@@ -24,10 +24,11 @@ BlueMeter 是一个常驻 Windows 系统托盘的轻量桌面应用，用来汇�
 | Rapoo / LINGBAO K98 2.4G 接收器只读电量 | ✅ 已完成（`0.3.1`） |
 | 经典蓝牙电量读取 | ✅ 已完成（`0.4.0`，`0.4.1` 补 GATT 兜底） |
 | 低电量通知与托盘摘要 | ✅ 已完成（`0.4.0`） |
+| 设置接线：开机启动 / 列表过滤 / 刷新间隔与阈值 | ✅ 已完成（`0.4.2`，面板形态） |
 | Fluent 主窗口与完整列表 | ⏳ 待实施（M4；当前为轻量预览列表） |
 | 稳定性加固 | ⏳ 待实施（M5） |
 
-> 当前版本为 `0.4.1`：M1 的托盘与窗口生命周期保持可用；M2 接入已配对 BLE/经典设备枚举、地址去重、BLE GATT 电量读取、通知订阅、刷新调度与状态事件；`0.3.1` 增加 Rapoo 与 LINGBAO K98 2.4G 接收器的只读 HID 电量读取。`0.4.0` 补齐经典蓝牙电量（系统 AEP 属性）、低电量聚合托盘气泡与统一托盘摘要；`0.4.1` 让经典蓝牙在连接后每轮重读属性，并对可连接的设备追加 BLE GATT 兜底，读不到时不再误判“不支持”。完整 Fluent 列表与设置页留到 M4。
+> 当前版本为 `0.4.2`：M1 的托盘与窗口生命周期保持可用；M2 接入已配对 BLE/经典设备枚举、地址去重、BLE GATT 电量读取、通知订阅、刷新调度与状态事件；`0.3.1` 增加 Rapoo 与 LINGBAO K98 2.4G 接收器的只读 HID 电量读取。`0.4.0` 补齐经典蓝牙电量（系统 AEP 属性）、低电量聚合托盘气泡与统一托盘摘要；`0.4.1` 让经典蓝牙在连接后每轮重读属性，并对可连接的设备追加 BLE GATT 兜底；`0.4.2` 把开机启动、列表过滤、刷新间隔与低电量阈值真正接线，并给出可用的设置面板。完整 Fluent 列表与设置页留到 M4。
 
 当前基线：
 
@@ -160,7 +161,10 @@ dotnet publish .\BlueMeter.csproj -c Release -r win-x64 --self-contained true
 | 托盘菜单“立即刷新” | 触发一轮手动扫描；若正在扫描则最多排队一次，不并发 |
 | 托盘菜单“退出” | 设置退出标志，保存设置、释放托盘与 BLE 订阅，彻底结束进程 |
 | 悬停托盘图标 | 显示一行摘要；完整设备列表在主窗口中 |
-| 低电量 | 电量跌破阈值（默认 20%）时弹一条托盘气泡；多设备同轮告警合并为一条，回升到阈值 + 5% 以上才重新武装 |
+| 主窗口“设置” | 打开设置面板：刷新间隔（数字 + 秒/分钟/小时，10 秒–24 小时）、低电量阈值、低电量气泡、BLE 通知订阅、显示不支持电量的设备、开机启动、启动时最小化；修改立即保存并生效 |
+| 刷新间隔输入 | 填数字、选单位后按 Enter 或点到别处即生效；超范围会回成边界值，留空会恢复原值；单位切换按新单位解释当前数字 |
+| 开机时自动启动 | 勾选后写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `BlueMeter` 项；取消勾选立即删除，无需管理员权限 |
+| 低电量 | 电量跌破阈值（默认 20%，可在设置中改成 5–50%）时弹一条托盘气泡；多设备同轮告警合并为一条，回升到阈值 + 5% 以上才重新武装 |
 
 托盘 ToolTip 受 Windows `NOTIFYICONDATA.szTip` 长度限制（约 127 字符），因此只显示摘要，不显示完整列表。
 
@@ -178,7 +182,7 @@ dotnet publish .\BlueMeter.csproj -c Release -r win-x64 --self-contained true
 
 ## 项目结构
 
-当前仓库（`0.4.1`）：
+当前仓库（`0.4.2`）：
 
 ```text
 BlueMeter/
@@ -203,6 +207,7 @@ BlueMeter/
 ├─ Services/
 │  ├─ AppLog.cs                        # 按天日志、7 天保留、地址脱敏
 │  ├─ SettingsService.cs               # JSON 原子读写、损坏回退
+│  ├─ StartupRegistrationService.cs    # HKCU Run 键开机启动项读写与对齐
 │  ├─ TrayIconService.cs               # TaskbarIcon、菜单、ToolTip、退出
 │  ├─ IDeviceBatteryService.cs
 │  ├─ DeviceBatteryService.cs          # 蓝牙 + 2.4G 枚举、调度、状态、事件
@@ -219,8 +224,9 @@ BlueMeter/
 │  ├─ K98_24GDeviceEnumerator.cs       # K98 col01 接口枚举
 │  └─ K98_24GProbe.cs                  # 13 4A 只读电量查询解析
 ├─ ViewModels/
-│  └─ DeviceItemViewModel.cs           # M2 预览行模型
-├─ BlueMeter.Tests/                    # xUnit 单元测试（属性解码 / 托盘摘要 / 低电量文案）
+│  ├─ DeviceItemViewModel.cs           # M2 预览行模型
+│  └─ DeviceListProjector.cs           # 列表排序与“隐藏不支持设备”投影
+├─ BlueMeter.Tests/                    # xUnit 单元测试（属性解码 / 托盘摘要 / 低电量文案 / 列表投影 / 开机启动命令）
 ├─ README.md
 ├─ ROADMAP.md
 ├─ CONTRIBUTING.md
@@ -298,7 +304,8 @@ BlueMeter/
 | --- | --- | --- |
 | Mica 仅 Windows 11 | Windows 10 上 WPF-UI 会退化为纯色/兼容背景 | 视觉差异，不影响功能 |
 | 经典蓝牙无统一电量 API | 优先读系统属性 `System.Devices.BatteryLife`，缺失时按地址走 BLE GATT；两者都不可用时显示“暂时不可达”并持续重试 | 不支持 GATT 的耳机（如 HUAWEI FreeBuds 7i 实测 `Le.IsConnectable=False`）读不到电量，Windows 设置页的数值与第三方应用不通 |
-| 主窗口为 M2 预览列表 | 完整 Fluent 设备列表、电量条与设置页在 M4 | 当前仅提供名称、类型、状态与百分比 |
+| 主窗口为 M2 预览列表 | 设备列表、电量条与完整设置页在 M4；当前设置以覆盖面板形式提供 | 当前仅提供名称、类型、状态与百分比 |
+| 开机启动写当前用户注册表 | 只支持当前用户的 `HKCU` Run 项，不写 `HKLM`、不注册计划任务；移动或删除 exe 后下次启动会自动纠正或清理 | 多用户共享安装时需每台账户各自勾选 |
 | BLE 需要设备可连接且广播电量服务 | 设备休眠、被厂商软件独占、未暴露 `0x180F` 时读取失败 | 显示“暂时不可达”或“--” |
 | 2.4G 支持是厂商专用 | 仅匹配已确认的 Rapoo `VID_24AE&PID_1861` 的 `MI_01/COL05` 与 K98 `VID_3554&PID_FA09` 的 `MI_01/COL01`；不承诺其他 2.4G/USB 接收器 | 其他接收器不显示，避免猜测协议 |
 | 其他 LINGBAO 型号未支持 | K98 2.4G 的 `13 4A` 只读查询已确认，但不能套用到其他 LINGBAO 型号 | 不显示 2.4G 电量，不伪造读数；确认协议后再接入 |

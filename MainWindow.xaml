@@ -96,6 +96,115 @@
                 </Grid>
             </Border>
 
+            <!-- 设置面板：M4 完整设置页之前的可用形态，覆盖在列表上方，收起时不影响列表布局。 -->
+            <Border x:Name="SettingsPanel"
+                    Grid.Row="1"
+                    Margin="0,18"
+                    Padding="20,16"
+                    MaxWidth="560"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Top"
+                    Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Visibility="Collapsed">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock VerticalAlignment="Center"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Text="设置" />
+                        <ui:Button HorizontalAlignment="Right"
+                                   Click="OnCloseSettingsClick"
+                                   Content="完成" />
+                    </Grid>
+
+                    <Grid Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="188" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="刷新间隔" />
+                            <TextBlock Margin="0,2,0,0"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       Text="10 秒 – 24 小时，下一轮生效" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"
+                                    Orientation="Horizontal">
+                            <TextBox x:Name="RefreshIntervalInput"
+                                     Width="64"
+                                     KeyDown="OnRefreshIntervalKeyDown"
+                                     LostFocus="OnRefreshIntervalEdited"
+                                     TextAlignment="Right"
+                                     VerticalContentAlignment="Center" />
+                            <ComboBox x:Name="RefreshIntervalUnitBox"
+                                      Width="88"
+                                      Margin="8,0,0,0"
+                                      SelectionChanged="OnRefreshIntervalUnitChanged" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="132" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="低电量阈值" />
+                            <TextBlock Margin="0,2,0,0"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       Text="5–50%，读取成功后立即生效" />
+                        </StackPanel>
+                        <ComboBox x:Name="LowThresholdBox"
+                                  Grid.Column="1"
+                                  VerticalAlignment="Center"
+                                  SelectionChanged="OnLowThresholdChanged" />
+                    </Grid>
+
+                    <ui:ToggleSwitch x:Name="NotificationsSwitch"
+                                     Margin="0,14,0,0"
+                                     Checked="OnNotificationsToggled"
+                                     Unchecked="OnNotificationsToggled"
+                                     Content="低电量时弹出托盘气泡" />
+
+                    <ui:ToggleSwitch x:Name="GattSwitch"
+                                     Margin="0,10,0,0"
+                                     Checked="OnGattToggled"
+                                     Unchecked="OnGattToggled"
+                                     Content="订阅 BLE 电量通知（关闭后改为轮询）" />
+
+                    <ui:ToggleSwitch x:Name="ShowUnsupportedSwitch"
+                                     Margin="0,10,0,0"
+                                     Checked="OnShowUnsupportedToggled"
+                                     Unchecked="OnShowUnsupportedToggled"
+                                     Content="在列表中显示不支持电量的设备" />
+
+                    <ui:ToggleSwitch x:Name="RunAtStartupSwitch"
+                                     Margin="0,10,0,0"
+                                     Checked="OnRunAtStartupToggled"
+                                     Unchecked="OnRunAtStartupToggled"
+                                     Content="开机时自动启动" />
+
+                    <ui:ToggleSwitch x:Name="StartMinimizedSwitch"
+                                     Margin="0,10,0,0"
+                                     Checked="OnStartMinimizedToggled"
+                                     Unchecked="OnStartMinimizedToggled"
+                                     Content="启动时最小化到托盘（下次启动生效）" />
+
+                    <TextBlock x:Name="SettingsPathText"
+                               Margin="0,14,0,0"
+                               FontSize="12"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
             <StackPanel Grid.Row="2" Orientation="Horizontal">
                 <ui:Button x:Name="RefreshButton"
                            Margin="0,0,8,0"
@@ -104,8 +213,11 @@
                 <ui:Button Margin="0,0,8,0"
                            Click="OnHideToTrayClick"
                            Content="隐藏到托盘" />
-                <ui:Button Click="OnOpenLogDirectoryClick"
+                <ui:Button Margin="0,0,8,0"
+                           Click="OnOpenLogDirectoryClick"
                            Content="打开日志目录" />
+                <ui:Button Click="OnOpenSettingsClick"
+                           Content="设置" />
             </StackPanel>
         </Grid>
     </Grid>

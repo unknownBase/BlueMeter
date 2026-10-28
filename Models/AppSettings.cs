@@ -7,8 +7,8 @@ public sealed class AppSettings
 {
     public const int CurrentSchemaVersion = 1;
 
-    public const int MinRefreshIntervalSeconds = 30;
-    public const int MaxRefreshIntervalSeconds = 60;
+    public const int MinRefreshIntervalSeconds = 10;
+    public const int MaxRefreshIntervalSeconds = 24 * 60 * 60;
     public const int MinLowBatteryThreshold = 5;
     public const int MaxLowBatteryThreshold = 50;
 
