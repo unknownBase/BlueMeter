@@ -30,6 +30,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private bool _isInitialLoading = true;
     private bool _hasDevices;
     private bool _isEmpty;
+    private bool _areAllUnreachable;
     private bool _isRefreshing;
     private bool _isSettingsOpen;
     private bool _disposed;
@@ -150,7 +151,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public bool HasDevices
     {
         get => _hasDevices;
-        private set => SetProperty(ref _hasDevices, value);
+        private set
+        {
+            if (SetProperty(ref _hasDevices, value))
+            {
+                OnPropertyChanged(nameof(ShowDeviceList));
+            }
+        }
     }
 
     /// <summary>扫描完成且没有可显示设备。</summary>
@@ -159,6 +166,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         get => _isEmpty;
         private set => SetProperty(ref _isEmpty, value);
     }
+
+    /// <summary>有可显示设备，但全部暂时不可达：由状态页替代列表，避免只看到一排“--”。</summary>
+    public bool AreAllUnreachable
+    {
+        get => _areAllUnreachable;
+        private set
+        {
+            if (SetProperty(ref _areAllUnreachable, value))
+            {
+                OnPropertyChanged(nameof(ShowDeviceList));
+            }
+        }
+    }
+
+    /// <summary>列表可见：有设备，且不是全部不可达。</summary>
+    public bool ShowDeviceList => HasDevices && !AreAllUnreachable;
 
     /// <summary>相对时间（“3 分钟前”）每分钟级刷新，由窗口可见性控制启停。</summary>
     public void StartClock() => _clock.Start();
@@ -294,6 +317,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private void UpdateTexts()
     {
         HasDevices = _devices.Count > 0;
+        AreAllUnreachable = ComputeAreAllUnreachable();
         IsEmpty = _hasScanned && !HasDevices;
         IsInitialLoading = !_hasScanned;
 
@@ -311,6 +335,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         ListHintText = HasDevices ? BuildListHint() : string.Empty;
         SubtitleText = BuildSubtitle();
+    }
+
+    private bool ComputeAreAllUnreachable()
+    {
+        if (_devices.Count == 0)
+        {
+            return false;
+        }
+
+        if (_devices.All(device => device.IsStale))
+        {
+            return true;
+        }
+
+        // 每轮读取会先把行标成“正在读取…”再落败；全部行都在读取或不可达时
+        // 沿用上一轮结论，避免每次自动刷新都把状态页切成列表再切回来。
+        return _areAllUnreachable &&
+            _devices.All(device => device.IsStale || device.Status == BatteryReadStatus.Reading);
     }
 
     private string BuildListHint()

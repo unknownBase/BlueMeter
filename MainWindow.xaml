@@ -177,11 +177,11 @@
             </StackPanel>
         </Grid>
 
-        <!-- 列表与状态页：三者互斥显示 -->
+        <!-- 列表与状态页：互斥显示 -->
         <Grid Grid.Row="2" Margin="32,0,32,12">
             <ScrollViewer Padding="0,0,0,12"
                           VerticalScrollBarVisibility="Auto"
-                          Visibility="{Binding HasDevices, Converter={StaticResource BoolToVisibility}}">
+                          Visibility="{Binding ShowDeviceList, Converter={StaticResource BoolToVisibility}}">
                 <ItemsControl ItemTemplate="{StaticResource DeviceCardTemplate}"
                               ItemsSource="{Binding Devices}" />
             </ScrollViewer>
@@ -226,6 +226,30 @@
                            HorizontalAlignment="Center"
                            Command="{Binding OpenBluetoothSettingsCommand}"
                            Content="打开蓝牙设置" />
+            </StackPanel>
+
+            <StackPanel MaxWidth="440"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Visibility="{Binding AreAllUnreachable, Converter={StaticResource BoolToVisibility}}">
+                <ui:SymbolIcon HorizontalAlignment="Center"
+                               FontSize="32"
+                               Symbol="PlugDisconnected24" />
+                <TextBlock Margin="0,12,0,0"
+                           HorizontalAlignment="Center"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           Text="设备均暂时不可达" />
+                <TextBlock Margin="0,6,0,0"
+                           FontSize="12"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Text="请确认蓝牙开关与设备电源"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap" />
+                <ui:Button Margin="0,14,0,0"
+                           HorizontalAlignment="Center"
+                           Command="{Binding RefreshCommand}"
+                           Content="{Binding RefreshButtonText}" />
             </StackPanel>
         </Grid>
 
