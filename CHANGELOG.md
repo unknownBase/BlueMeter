@@ -7,6 +7,11 @@
 ### Added
 
 - 待实现：Fluent 主窗口、完整设备列表与设置（M4）
+
+## [0.4.3] - 2026-10-28
+
+### Added
+
 - LINGBAO K98 读取失败时，列表副标题追加“按键唤醒后刷新”，提示键盘休眠需先按键激活再刷新重试；快照新增 `Protocol` 字段供 UI 区分厂商协议。
 
 ### Changed
@@ -23,7 +28,9 @@
 
 ### Notes
 
-- `K98RetrySchedule` 与 `ProbeHealthTracker` 为纯逻辑类型，新增 11 个单元用例；`dotnet test` 共 58 个用例全部通过。
+- 回归收口：`dotnet build -c Release` 0 警告 0 错误，`dotnet test` 67 个用例全部通过（`K98RetrySchedule`、`ProbeHealthTracker`、`CycleWaiter`、`DeviceItemViewModel` 共 20 个为本次新增）。
+- 实机（Windows 11 + BARROT USB 蓝牙 + Rapoo/K98 接收器）验证：托盘退出无 `Could not get window handle`；K98 失败日志只在连续失败首轮记 `Warn`；刷新间隔由 7200 秒改为 10 秒后等待立即重置，随后各轮间隔 9–11 秒。
+- 版本提升至 0.4.3。
 
 ## [0.4.2] - 2026-10-28
 
