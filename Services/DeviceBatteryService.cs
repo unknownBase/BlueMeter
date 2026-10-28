@@ -1,43 +1,26 @@
 using System.Diagnostics;
-using System.Globalization;
 using BlueMeter.Models;
 using Microsoft.Win32;
-using Windows.Devices.Bluetooth;
-using Windows.Devices.Enumeration;
-using Windows.Devices.Radios;
 
 namespace BlueMeter.Services;
 
 /// <summary>
-/// 已配对蓝牙设备与 Rapoo / LINGBAO K98 2.4G 接收器枚举、电量读取、状态合并与刷新调度。
+/// 已配对蓝牙设备与 Rapoo / LINGBAO K98 2.4G 接收器的电量读取编排与刷新调度。
+/// 枚举与属性解析交给 <see cref="BluetoothDeviceEnumerator"/>，状态合并交给
+/// <see cref="BatteryStateStore"/>；本类型只负责生命周期、轮次编排与对外事件。
 /// 所有 GATT 操作串行执行；手动刷新只排队一次，避免并发访问蓝牙栈。
 /// </summary>
 public sealed class DeviceBatteryService : IDeviceBatteryService
 {
     private static readonly TimeSpan PerDeviceTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan CycleBudget = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan EnumerationTimeout = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan BluetoothStatusTimeout = TimeSpan.FromSeconds(5);
-
-    private static readonly string[] DevicePropertyKeys =
-    {
-        "System.Devices.Aep.DeviceAddress",
-        "System.Devices.Aep.IsConnected",
-        "System.Devices.Aep.Bluetooth.Le.IsConnectable",
-        "System.Devices.Aep.Category",
-        "System.Devices.BatteryLife",
-        "System.Devices.BatteryPlusCharging",
-        "System.Devices.BatteryPlusChargingText",
-        "System.Devices.Manufacturer",
-        "System.Devices.ModelName",
-    };
 
     private readonly SettingsService _settingsService;
     private readonly BleBatteryProbe _probe = new();
+    private readonly BluetoothDeviceEnumerator _bluetooth = new();
     private readonly Hid24GDeviceEnumerator _hid24GEnumerator = new();
     private readonly Hid24GProbe _hid24GProbe = new();
-    private readonly object _stateLock = new();
-    private readonly Dictionary<string, DeviceEntry> _devices = new(StringComparer.OrdinalIgnoreCase);
+    private readonly BatteryStateStore _store;
     private readonly SemaphoreSlim _cycleGate = new(1, 1);
 
     private CancellationTokenSource? _loopCts;
@@ -53,6 +36,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
     public DeviceBatteryService(SettingsService settingsService)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
+        _store = new BatteryStateStore(() => _settingsService.Current.LowBatteryThreshold);
     }
 
     public event EventHandler<IReadOnlyList<DeviceBatterySnapshot>>? DevicesUpdated;
@@ -61,16 +45,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
 
     public event EventHandler<DeviceServiceStatus>? StatusChanged;
 
-    public IReadOnlyList<DeviceBatterySnapshot> Current
-    {
-        get
-        {
-            lock (_stateLock)
-            {
-                return BuildSnapshotsLocked();
-            }
-        }
-    }
+    public IReadOnlyList<DeviceBatterySnapshot> Current => _store.Snapshot();
 
     public DeviceServiceStatus Status => Volatile.Read(ref _status);
 
@@ -307,7 +282,9 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             $"开始第 {cycleNumber} 轮设备刷新{(manual ? "（手动）" : string.Empty)}",
             "Cycle");
 
-        var bluetoothStatus = await ProbeBluetoothStatusAsync(cancellationToken).ConfigureAwait(false);
+        var bluetoothStatus = await _bluetooth
+            .ProbeStatusAsync(cancellationToken)
+            .ConfigureAwait(false);
         var bluetoothUsable = bluetoothStatus.State is not (
             DeviceServiceState.NoAdapter or DeviceServiceState.BluetoothOff);
         var bluetoothEnumerationSucceeded = false;
@@ -317,13 +294,13 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
 
         if (!bluetoothUsable)
         {
-            MarkBluetoothDevicesUnavailable();
+            _store.MarkBluetoothDevicesUnavailable();
             await ReleaseAllSubscriptionsAsync(bluetoothStatus.Message).ConfigureAwait(false);
         }
         else
         {
-            var bleTask = EnumerateAsync(DeviceTransportKind.BluetoothLe, cancellationToken);
-            var classicTask = EnumerateAsync(DeviceTransportKind.BluetoothClassic, cancellationToken);
+            var bleTask = _bluetooth.EnumerateAsync(DeviceTransportKind.BluetoothLe, cancellationToken);
+            var classicTask = _bluetooth.EnumerateAsync(DeviceTransportKind.BluetoothClassic, cancellationToken);
             var bleResult = await bleTask.ConfigureAwait(false);
             var classicResult = await classicTask.ConfigureAwait(false);
 
@@ -337,15 +314,14 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
                 candidates.AddRange(bleResult.Devices);
                 candidates.AddRange(classicResult.Devices);
 
-                var merged = MergeCandidates(candidates);
                 var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var candidate in merged)
+                foreach (var candidate in BluetoothDeviceEnumerator.Merge(candidates))
                 {
                     seenKeys.Add(candidate.Key);
-                    UpsertDevice(candidate);
+                    _store.UpsertDevice(candidate);
                 }
 
-                var removed = RemoveMissingBluetoothDevices(
+                var removed = _store.RemoveMissingBluetoothDevices(
                     seenKeys,
                     bleResult.Succeeded && classicResult.Succeeded);
                 foreach (var removedEntry in removed)
@@ -372,19 +348,19 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         {
             foreach (var device in hidResult.Devices)
             {
-                seenHidKeys.Add(BuildHidKey(device));
-                UpsertHidDevice(device);
+                seenHidKeys.Add(BatteryStateStore.BuildHidKey(device));
+                _store.UpsertHidDevice(device);
             }
 
             if (hidResult.FailedInterfaceCount > 0)
             {
                 // 接口存在但暂时无法只读打开时，保留旧条目并标为不可达，
                 // 不要把它误判成“接收器已拔出”。
-                MarkHidDevicesMissing(seenHidKeys);
+                _store.MarkHidDevicesMissing(seenHidKeys);
             }
             else
             {
-                foreach (var removedEntry in RemoveMissingHidDevices(seenHidKeys))
+                foreach (var removedEntry in _store.RemoveMissingHidDevices(seenHidKeys))
                 {
                     AppLog.Info($"2.4G 设备已移除：{removedEntry.State.Name}", "Hid24G");
                 }
@@ -415,13 +391,13 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         }
 
         var readTargets = bleEnumerationSucceeded
-            ? GetReadTargets()
+            ? _store.GetBleReadTargets()
             : new List<DeviceEntry>();
         var hidReadTargets = hidResult.Succeeded
-            ? GetHid24GReadTargets()
+            ? _store.GetHid24GReadTargets()
             : new List<DeviceEntry>();
         var classicReadTargets = classicEnumerationSucceeded
-            ? GetClassicReadTargets()
+            ? _store.GetClassicReadTargets()
             : new List<DeviceEntry>();
         var notices = new List<LowBatteryNotice>();
         var successCount = 0;
@@ -474,7 +450,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             // 避免设备休眠时每轮刷一条 Warn。
             var shouldWarnFailure = RecordHidHealth(entry, result);
 
-            ApplyProbeResult(entry, result, notices);
+            _store.ApplyProbeResult(entry, result, notices);
             PublishSnapshots();
 
             if (!result.IsSuccess)
@@ -500,9 +476,9 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             if (classic.IsConnected)
             {
                 // 枚举拿到的是快照属性，连接后耳机会在系统属性里补上电量，所以每轮再读一次。
-                var (freshPercent, freshChargingText) = await ReadSystemBatteryAsync(
-                    classic.Id,
-                    cancellationToken).ConfigureAwait(false);
+                var (freshPercent, freshChargingText) = await BluetoothDeviceEnumerator
+                    .ReadSystemBatteryAsync(classic.Id, cancellationToken)
+                    .ConfigureAwait(false);
                 if (freshPercent.HasValue)
                 {
                     propertyPercent = freshPercent;
@@ -578,7 +554,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
                 failureCount++;
             }
 
-            ApplyProbeResult(entry, result, notices);
+            _store.ApplyProbeResult(entry, result, notices);
             PublishSnapshots();
 
             if (usedBleFallback && !result.IsSuccess)
@@ -652,7 +628,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
                 failureCount++;
             }
 
-            ApplyProbeResult(entry, result, notices);
+            _store.ApplyProbeResult(entry, result, notices);
             PublishSnapshots();
 
             if (!result.IsSuccess)
@@ -670,7 +646,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             : $"，{BuildHidHealthText(hidReadTargets)}";
 
         AppLog.Info(
-            $"第 {cycleNumber} 轮完成：{Current.Count} 台设备，" +
+            $"第 {cycleNumber} 轮完成：{_store.Count} 台设备，" +
             $"{readTargets.Count} 台 BLE，{hidReadTargets.Count} 台 2.4G，" +
             $"{classicReadTargets.Count} 台经典蓝牙，" +
             $"{successCount} 成功，{failureCount} 失败，" +
@@ -679,635 +655,10 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             "Cycle");
     }
 
-    private async Task<EnumerationResult> EnumerateAsync(
-        DeviceTransportKind kind,
-        CancellationToken cancellationToken)
-    {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(EnumerationTimeout);
-
-        try
-        {
-            var selector = kind == DeviceTransportKind.BluetoothLe
-                ? BluetoothLEDevice.GetDeviceSelectorFromPairingState(true)
-                : BluetoothDevice.GetDeviceSelectorFromPairingState(true);
-
-            var devices = await DeviceInformation
-                .FindAllAsync(selector, DevicePropertyKeys)
-                .AsTask(cts.Token)
-                .ConfigureAwait(false);
-
-            var candidates = new List<DeviceCandidate>(devices.Count);
-            foreach (var device in devices)
-            {
-                var candidate = CreateCandidate(device, kind);
-                if (candidate is not null)
-                {
-                    candidates.Add(candidate);
-                }
-            }
-
-            AppLog.Debug(
-                $"{KindText(kind)} 枚举 {devices.Count} 条，保留 {candidates.Count} 条",
-                "Enum");
-            return new EnumerationResult(kind, candidates, true, null);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (OperationCanceledException)
-        {
-            AppLog.Warn($"{KindText(kind)} 枚举超时", "Enum");
-            return new EnumerationResult(kind, new List<DeviceCandidate>(), false, "timeout");
-        }
-        catch (Exception ex)
-        {
-            AppLog.Warn(
-                $"{KindText(kind)} 枚举失败：0x{ex.HResult:X8} {ex.Message}",
-                "Enum");
-            return new EnumerationResult(kind, new List<DeviceCandidate>(), false, ex.Message);
-        }
-    }
-
-    private async Task<DeviceServiceStatus> ProbeBluetoothStatusAsync(
-        CancellationToken cancellationToken)
-    {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(BluetoothStatusTimeout);
-
-        try
-        {
-            var adapter = await BluetoothAdapter
-                .GetDefaultAsync()
-                .AsTask(cts.Token)
-                .ConfigureAwait(false);
-
-            if (adapter is null)
-            {
-                return await ProbeRadioFallbackAsync(cts, cancellationToken).ConfigureAwait(false);
-            }
-
-            try
-            {
-                var radio = await adapter
-                    .GetRadioAsync()
-                    .AsTask(cts.Token)
-                    .ConfigureAwait(false);
-
-                if (radio is not null && radio.State != RadioState.On)
-                {
-                    return DeviceServiceStatus.Create(
-                        DeviceServiceState.BluetoothOff,
-                        $"蓝牙未开启（{RadioStateText(radio.State)}）");
-                }
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                // 无线电状态读取失败时仍尝试 GATT，避免误判。
-                AppLog.Debug($"读取蓝牙无线电状态失败：{ex.Message}", "Bluetooth");
-            }
-
-            return DeviceServiceStatus.Create(DeviceServiceState.Ready, "蓝牙可用");
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (OperationCanceledException)
-        {
-            return DeviceServiceStatus.Create(
-                DeviceServiceState.Error,
-                "读取蓝牙状态超时");
-        }
-        catch (Exception ex)
-        {
-            return DeviceServiceStatus.Create(
-                DeviceServiceState.Error,
-                $"读取蓝牙状态失败：0x{ex.HResult:X8}");
-        }
-    }
-
-    private static async Task<DeviceServiceStatus> ProbeRadioFallbackAsync(
-        CancellationTokenSource cts,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var radios = await Radio
-                .GetRadiosAsync()
-                .AsTask(cts.Token)
-                .ConfigureAwait(false);
-
-            var bluetoothRadio = radios.FirstOrDefault(radio => radio.Kind == RadioKind.Bluetooth);
-            if (bluetoothRadio is not null && bluetoothRadio.State != RadioState.On)
-            {
-                return DeviceServiceStatus.Create(
-                    DeviceServiceState.BluetoothOff,
-                    $"蓝牙未开启（{RadioStateText(bluetoothRadio.State)}）");
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch
-        {
-            // 无线电查询失败时保持“无适配器”结论。
-        }
-
-        return DeviceServiceStatus.Create(
-            DeviceServiceState.NoAdapter,
-            "未检测到蓝牙适配器");
-    }
-
-    private static List<MergedCandidate> MergeCandidates(IEnumerable<DeviceCandidate> candidates)
-    {
-        var groups = new Dictionary<string, MergedCandidate>(StringComparer.OrdinalIgnoreCase);
-        foreach (var candidate in candidates)
-        {
-            var key = candidate.Address.HasValue
-                ? $"a:{candidate.Address.Value:X12}"
-                : $"i:{candidate.Id}";
-
-            if (!groups.TryGetValue(key, out var group))
-            {
-                group = new MergedCandidate(key);
-                groups[key] = group;
-            }
-
-            if (candidate.Transport == DeviceTransportKind.BluetoothLe)
-            {
-                group.Ble ??= candidate;
-            }
-            else
-            {
-                group.Classic ??= candidate;
-            }
-        }
-
-        return groups.Values.ToList();
-    }
-
-    private static DeviceCandidate? CreateCandidate(
-        DeviceInformation device,
-        DeviceTransportKind kind)
-    {
-        if (string.IsNullOrWhiteSpace(device.Id))
-        {
-            return null;
-        }
-
-        var name = string.IsNullOrWhiteSpace(device.Name)
-            ? "未知设备"
-            : device.Name.Trim();
-
-        if (IsClearlyNotDevice(name))
-        {
-            AppLog.Debug($"过滤非设备条目：{name}", "Enum");
-            return null;
-        }
-
-        var properties = device.Properties;
-        var address = TryGetAddress(properties);
-        var isConnected = GetBoolean(properties, "System.Devices.Aep.IsConnected");
-        var chargingText = GetString(properties, "System.Devices.BatteryPlusChargingText");
-        var battery = SystemBatteryPropertyReader.Read(properties);
-        var leConnectable = GetNullableBoolean(properties, "System.Devices.Aep.Bluetooth.Le.IsConnectable");
-
-        if (kind == DeviceTransportKind.BluetoothClassic)
-        {
-            // 经典蓝牙没有统一电量 API，属性缺失时要能看到实际拿到的键值。
-            AppLog.Debug($"经典蓝牙属性：{name} → {DescribeSystemBattery(properties)}", "Enum");
-        }
-
-        return new DeviceCandidate(
-            device.Id,
-            name,
-            address,
-            kind,
-            isConnected,
-            string.IsNullOrWhiteSpace(chargingText) ? null : chargingText.Trim(),
-            battery.Percent,
-            battery.Charging,
-            leConnectable);
-    }
-
-    private static string DescribeSystemBattery(IReadOnlyDictionary<string, object> properties)
-    {
-        var life = properties.TryGetValue(SystemBatteryPropertyReader.BatteryLifeKey, out var rawLife)
-            ? rawLife?.ToString() ?? "null"
-            : "缺失";
-        var combined = properties.TryGetValue(SystemBatteryPropertyReader.BatteryPlusChargingKey, out var rawCombined)
-            ? rawCombined?.ToString() ?? "null"
-            : "缺失";
-        var (percent, charging) = SystemBatteryPropertyReader.Read(properties);
-
-        return $"BatteryLife={life}，BatteryPlusCharging={combined}，" +
-               $"解析={percent?.ToString() ?? "无"}{(charging ? "（充电）" : string.Empty)}";
-    }
-
-    private static bool IsClearlyNotDevice(string name) =>
-        name.Equals("Bluetooth", StringComparison.OrdinalIgnoreCase) ||
-        name.Equals("Bluetooth LE Device", StringComparison.OrdinalIgnoreCase) ||
-        name.Equals("Microsoft Bluetooth Enumerator", StringComparison.OrdinalIgnoreCase);
-
-    private static ulong? TryGetAddress(IReadOnlyDictionary<string, object> properties)
-    {
-        if (!properties.TryGetValue("System.Devices.Aep.DeviceAddress", out var value) ||
-            value is null)
-        {
-            return null;
-        }
-
-        switch (value)
-        {
-            case ulong address:
-                return address;
-            case long signedAddress when signedAddress >= 0:
-                return (ulong)signedAddress;
-            case string text:
-            {
-                var trimmed = text.Trim();
-                var hex = trimmed.Replace(":", string.Empty).Replace("-", string.Empty);
-                if (ulong.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var parsed))
-                {
-                    return parsed;
-                }
-
-                if (ulong.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed))
-                {
-                    return parsed;
-                }
-
-                break;
-            }
-        }
-
-        try
-        {
-            return Convert.ToUInt64(value, CultureInfo.InvariantCulture);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static bool GetBoolean(
-        IReadOnlyDictionary<string, object> properties,
-        string key)
-    {
-        if (!properties.TryGetValue(key, out var value) || value is null)
-        {
-            return false;
-        }
-
-        return value switch
-        {
-            bool boolean => boolean,
-            string text when bool.TryParse(text, out var parsed) => parsed,
-            _ => false,
-        };
-    }
-
-    private static bool? GetNullableBoolean(
-        IReadOnlyDictionary<string, object> properties,
-        string key)
-    {
-        if (!properties.TryGetValue(key, out var value) || value is null)
-        {
-            return null;
-        }
-
-        return value switch
-        {
-            bool boolean => boolean,
-            string text when bool.TryParse(text, out var parsed) => parsed,
-            _ => null,
-        };
-    }
-
-    private static string? GetString(
-        IReadOnlyDictionary<string, object> properties,
-        string key) =>
-        properties.TryGetValue(key, out var value) ? value as string : null;
-
-    private void UpsertDevice(MergedCandidate candidate)
-    {
-        lock (_stateLock)
-        {
-            if (!_devices.TryGetValue(candidate.Key, out var entry))
-            {
-                entry = new DeviceEntry(candidate.Key);
-                _devices[candidate.Key] = entry;
-            }
-
-            entry.State.Id = candidate.Id;
-            entry.State.Address = candidate.Address;
-            entry.State.Name = candidate.Name;
-            entry.State.Transport = candidate.Transport;
-            entry.State.IsConnected = candidate.IsConnected;
-            entry.State.ChargingText = candidate.ChargingText;
-            entry.State.VendorId = null;
-            entry.State.ProductId = null;
-            entry.State.InterfacePath = null;
-            entry.State.ReceiverId = null;
-            entry.State.VendorName = null;
-            entry.BleSource = candidate.Ble;
-            entry.ClassicSource = candidate.Classic;
-            entry.HidSource = null;
-            entry.MissedCycles = 0;
-
-            if (candidate.Ble is null)
-            {
-                entry.State.SupportsNotifications = false;
-            }
-        }
-    }
-
-    private List<DeviceEntry> RemoveMissingBluetoothDevices(
-        HashSet<string> seenKeys,
-        bool bothSourcesEnumerated)
-    {
-        if (!bothSourcesEnumerated)
-        {
-            return new List<DeviceEntry>();
-        }
-
-        var removed = new List<DeviceEntry>();
-        lock (_stateLock)
-        {
-            foreach (var pair in _devices.ToList())
-            {
-                // 2.4G 设备由独立的枚举成功标志和 seen 集合管理。
-                if (pair.Value.HidSource is not null || seenKeys.Contains(pair.Key))
-                {
-                    continue;
-                }
-
-                pair.Value.MissedCycles++;
-                if (pair.Value.MissedCycles > 1)
-                {
-                    _devices.Remove(pair.Key);
-                    removed.Add(pair.Value);
-                }
-            }
-        }
-
-        return removed;
-    }
-
-    private List<DeviceEntry> GetReadTargets()
-    {
-        lock (_stateLock)
-        {
-            return _devices.Values
-                .Where(entry => entry.BleSource is not null)
-                .OrderByDescending(entry => entry.State.IsConnected)
-                .ThenBy(entry => entry.State.Name, StringComparer.CurrentCultureIgnoreCase)
-                .ToList();
-        }
-    }
-
-    /// <summary>
-    /// 只出现在经典蓝牙列表、且没有 BLE 来源的设备：它们只能靠系统属性读电量。
-    /// </summary>
-    private List<DeviceEntry> GetClassicReadTargets()
-    {
-        lock (_stateLock)
-        {
-            return _devices.Values
-                .Where(entry => entry.ClassicSource is not null && entry.BleSource is null)
-                .OrderByDescending(entry => entry.State.IsConnected)
-                .ThenBy(entry => entry.State.Name, StringComparer.CurrentCultureIgnoreCase)
-                .ToList();
-        }
-    }
-
-    /// <summary>
-    /// 重新读取单台设备的系统电量属性（不经枚举缓存）。失败时返回空值，由调用方决定后续兜底。
-    /// </summary>
-    private static async Task<(int? Percent, string? ChargingText)> ReadSystemBatteryAsync(
-        string deviceId,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(2));
-
-            var info = await DeviceInformation
-                .CreateFromIdAsync(deviceId, DevicePropertyKeys)
-                .AsTask(cts.Token)
-                .ConfigureAwait(false);
-
-            if (info is null)
-            {
-                return (null, null);
-            }
-
-            var battery = SystemBatteryPropertyReader.Read(info.Properties);
-            var chargingText = GetString(info.Properties, "System.Devices.BatteryPlusChargingText");
-            return (battery.Percent, string.IsNullOrWhiteSpace(chargingText) ? null : chargingText.Trim());
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            AppLog.Debug($"重新读取系统电量属性失败：{ex.Message}", "ClassicProbe");
-            return (null, null);
-        }
-    }
-
-    private List<DeviceEntry> GetHid24GReadTargets()
-    {
-        lock (_stateLock)
-        {
-            return _devices.Values
-                .Where(entry => entry.HidSource is not null)
-                .OrderBy(entry => entry.State.Name, StringComparer.CurrentCultureIgnoreCase)
-                .ToList();
-        }
-    }
-
-    private void UpsertHidDevice(Hid24GDeviceInfo device)
-    {
-        var key = BuildHidKey(device);
-        lock (_stateLock)
-        {
-            if (!_devices.TryGetValue(key, out var entry))
-            {
-                entry = new DeviceEntry(key);
-                _devices[key] = entry;
-            }
-
-            entry.State.Id = device.Id;
-            entry.State.Address = null;
-            entry.State.Name = device.Name;
-            entry.State.Transport = DeviceTransportKind.Hid24G;
-            entry.State.IsConnected = true;
-            entry.State.ChargingText = null;
-            entry.State.SupportsNotifications = false;
-            entry.State.VendorId = device.VendorId;
-            entry.State.ProductId = device.ProductId;
-            entry.State.InterfacePath = device.InterfacePath;
-            entry.State.ReceiverId = device.ReceiverId;
-            entry.State.VendorName = device.Manufacturer;
-            entry.BleSource = null;
-            entry.ClassicSource = null;
-            entry.HidSource = device;
-            entry.MissedCycles = 0;
-        }
-    }
-
-    private List<DeviceEntry> RemoveMissingHidDevices(HashSet<string> seenKeys)
-    {
-        var removed = new List<DeviceEntry>();
-        lock (_stateLock)
-        {
-            foreach (var pair in _devices.ToList())
-            {
-                if (pair.Value.HidSource is null || seenKeys.Contains(pair.Key))
-                {
-                    continue;
-                }
-
-                pair.Value.MissedCycles++;
-                if (pair.Value.MissedCycles > 1)
-                {
-                    _devices.Remove(pair.Key);
-                    removed.Add(pair.Value);
-                }
-            }
-        }
-
-        return removed;
-    }
-
-    private void MarkHidDevicesMissing(HashSet<string> seenKeys)
-    {
-        lock (_stateLock)
-        {
-            foreach (var pair in _devices)
-            {
-                if (pair.Value.HidSource is null || seenKeys.Contains(pair.Key))
-                {
-                    continue;
-                }
-
-                pair.Value.State.Status = pair.Value.State.BatteryPercent.HasValue
-                    ? BatteryReadStatus.Stale
-                    : BatteryReadStatus.Unavailable;
-            }
-        }
-    }
-
-    private static string BuildHidKey(Hid24GDeviceInfo device) => $"hid:{device.Id}";
-
     private void MarkReading(DeviceEntry entry)
     {
-        lock (_stateLock)
-        {
-            entry.State.Status = BatteryReadStatus.Reading;
-            entry.State.LastAttemptAt = DateTimeOffset.Now;
-        }
-
+        _store.MarkReading(entry);
         PublishSnapshots();
-    }
-
-    private void ApplyProbeResult(
-        DeviceEntry entry,
-        BatteryProbeResult result,
-        ICollection<LowBatteryNotice> notices)
-    {
-        var now = DateTimeOffset.Now;
-        lock (_stateLock)
-        {
-            entry.State.LastAttemptAt = now;
-            entry.State.SupportsNotifications = result.SupportsNotifications;
-
-            if (entry.State.Transport == DeviceTransportKind.Hid24G)
-            {
-                // 2.4G 探针每次返回完整充电状态；不充电时必须清掉上一次的“充电中”。
-                entry.State.ChargingText = result.ChargingText;
-            }
-            else if (!string.IsNullOrWhiteSpace(result.ChargingText))
-            {
-                entry.State.ChargingText = result.ChargingText;
-            }
-
-            switch (result.Status)
-            {
-                case BatteryReadStatus.Ok when result.BatteryPercent.HasValue:
-                    ApplySuccessLocked(entry, result.BatteryPercent.Value, now, notices);
-                    break;
-                case BatteryReadStatus.Stale when result.BatteryPercent.HasValue:
-                    // 经典蓝牙离线时的系统缓存值：保留读数，但不刷新 LastSuccessAt。
-                    entry.State.BatteryPercent = result.BatteryPercent.Value;
-                    entry.State.Status = BatteryReadStatus.Stale;
-                    break;
-                case BatteryReadStatus.NotSupported:
-                    entry.State.Status = BatteryReadStatus.NotSupported;
-                    entry.State.BatteryPercent = null;
-                    entry.State.LastSuccessAt = null;
-                    break;
-                default:
-                    entry.State.Status = entry.State.BatteryPercent.HasValue
-                        ? BatteryReadStatus.Stale
-                        : BatteryReadStatus.Unavailable;
-                    break;
-            }
-        }
-    }
-
-    private void ApplySuccessLocked(
-        DeviceEntry entry,
-        int batteryPercent,
-        DateTimeOffset timestamp,
-        ICollection<LowBatteryNotice> notices)
-    {
-        entry.State.BatteryPercent = batteryPercent;
-        entry.State.LastSuccessAt = timestamp;
-        entry.State.Status = BatteryReadStatus.Ok;
-
-        var threshold = _settingsService.Current.LowBatteryThreshold;
-        if (batteryPercent <= threshold && !entry.State.LowBatteryAlerted)
-        {
-            entry.State.LowBatteryAlerted = true;
-            notices.Add(new LowBatteryNotice(
-                entry.State.Id,
-                entry.State.Name,
-                batteryPercent));
-        }
-        else if (batteryPercent >= threshold + 5)
-        {
-            entry.State.LowBatteryAlerted = false;
-        }
-    }
-
-    private void MarkBluetoothDevicesUnavailable()
-    {
-        lock (_stateLock)
-        {
-            foreach (var entry in _devices.Values)
-            {
-                if (entry.State.Transport == DeviceTransportKind.Hid24G)
-                {
-                    continue;
-                }
-
-                entry.State.Status = entry.State.BatteryPercent.HasValue
-                    ? BatteryReadStatus.Stale
-                    : BatteryReadStatus.Unavailable;
-            }
-        }
     }
 
     private async Task ReleaseAllSubscriptionsAsync(string reason)
@@ -1323,13 +674,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             AppLog.Warn("释放全部 BLE 通知订阅失败", "BleProbe", ex);
         }
 
-        lock (_stateLock)
-        {
-            foreach (var entry in _devices.Values)
-            {
-                entry.State.SupportsNotifications = false;
-            }
-        }
+        _store.ClearNotificationSupport();
 
         if (hadSubscriptions)
         {
@@ -1345,37 +690,23 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         }
 
         var notices = new List<LowBatteryNotice>();
-        var updated = false;
-
-        lock (_stateLock)
+        if (!_store.TryApplyBleUpdate(
+                update.DeviceId,
+                update.BatteryPercent,
+                update.Timestamp,
+                notices))
         {
-            var entry = _devices.Values.FirstOrDefault(
-                candidate => string.Equals(
-                    candidate.BleSource?.Id,
-                    update.DeviceId,
-                    StringComparison.OrdinalIgnoreCase));
-
-            if (entry is null)
-            {
-                return;
-            }
-
-            ApplySuccessLocked(entry, update.BatteryPercent, update.Timestamp, notices);
-            entry.State.SupportsNotifications = true;
-            updated = true;
+            return;
         }
 
-        if (updated)
-        {
-            PublishSnapshots();
-            RaiseLowBatteryDetected(notices);
-        }
+        PublishSnapshots();
+        RaiseLowBatteryDetected(notices);
     }
 
     private void LogProbeFailure(DeviceEntry entry, BatteryProbeResult result)
     {
         var message =
-            $"{entry.State.Name}（{KindText(entry.State.Transport)}）电量读取失败：" +
+            $"{entry.State.Name}（{entry.State.Transport.ToLogText()}）电量读取失败：" +
             $"{result.FailureStage} {result.FailureMessage}" +
             (result.HResult.HasValue ? $" HRESULT=0x{result.HResult.Value:X8}" : string.Empty);
 
@@ -1433,7 +764,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             ? 0
             : entry.Health.ConsecutiveFailures;
         var message =
-            $"{entry.State.Name}（{KindText(entry.State.Transport)}）电量读取失败：" +
+            $"{entry.State.Name}（{entry.State.Transport.ToLogText()}）电量读取失败：" +
             $"{result.FailureStage} {result.FailureMessage}" +
             (failures > 1 ? $"（连续第 {failures} 次）" : string.Empty);
 
@@ -1467,41 +798,8 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             $"失败率 {(double)failures / attempts * 100:0.0}%";
     }
 
-    private void PublishSnapshots()
-    {
-        IReadOnlyList<DeviceBatterySnapshot> snapshots;
-        lock (_stateLock)
-        {
-            snapshots = BuildSnapshotsLocked();
-        }
-
-        RaiseSafely(DevicesUpdated, snapshots, "DevicesUpdated");
-    }
-
-    private IReadOnlyList<DeviceBatterySnapshot> BuildSnapshotsLocked() =>
-        _devices.Values
-            .Select(entry => new DeviceBatterySnapshot(
-                entry.State.Id,
-                entry.State.Address,
-                entry.State.Name,
-                entry.State.Transport,
-                entry.State.BatteryPercent,
-                entry.State.Status,
-                entry.State.LastSuccessAt,
-                entry.State.LastAttemptAt,
-                entry.State.IsConnected,
-                entry.State.SupportsNotifications,
-                entry.State.ChargingText)
-            {
-                VendorId = entry.State.VendorId,
-                ProductId = entry.State.ProductId,
-                InterfacePath = entry.State.InterfacePath,
-                ReceiverId = entry.State.ReceiverId,
-                VendorName = entry.State.VendorName,
-            })
-            .OrderBy(snapshot => snapshot.Status is BatteryReadStatus.Stale or BatteryReadStatus.Unavailable)
-            .ThenBy(snapshot => snapshot.Name, StringComparer.CurrentCultureIgnoreCase)
-            .ToList();
+    private void PublishSnapshots() =>
+        RaiseSafely(DevicesUpdated, _store.Snapshot(), "DevicesUpdated");
 
     private void UpdateStatusAfterEnumeration(
         DeviceServiceStatus bluetoothStatus,
@@ -1683,95 +981,4 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             }
         }
     }
-
-    private static string KindText(DeviceTransportKind kind) =>
-        kind switch
-        {
-            DeviceTransportKind.BluetoothLe => "BLE",
-            DeviceTransportKind.BluetoothClassic => "经典蓝牙",
-            DeviceTransportKind.Hid24G => "2.4G",
-            _ => kind.ToString(),
-        };
-
-    private static string RadioStateText(RadioState state) =>
-        state switch
-        {
-            RadioState.On => "开启",
-            RadioState.Off => "关闭",
-            RadioState.Disabled => "已禁用",
-            _ => state.ToString(),
-        };
-
-    private sealed record DeviceCandidate(
-        string Id,
-        string Name,
-        ulong? Address,
-        DeviceTransportKind Transport,
-        bool IsConnected,
-        string? ChargingText,
-        int? BatteryPercent,
-        bool IsCharging,
-        bool? LeConnectable);
-
-    private sealed class MergedCandidate
-    {
-        public MergedCandidate(string key)
-        {
-            Key = key;
-        }
-
-        public string Key { get; }
-
-        public DeviceCandidate? Ble { get; set; }
-
-        public DeviceCandidate? Classic { get; set; }
-
-        public string Id => Ble?.Id ?? Classic!.Id;
-
-        public string Name => Ble?.Name ?? Classic!.Name;
-
-        public ulong? Address => Ble?.Address ?? Classic?.Address;
-
-        public DeviceTransportKind Transport =>
-            Ble is not null ? DeviceTransportKind.BluetoothLe : DeviceTransportKind.BluetoothClassic;
-
-        public bool IsConnected =>
-            (Ble?.IsConnected ?? false) || (Classic?.IsConnected ?? false);
-
-        public string? ChargingText => Ble?.ChargingText ?? Classic?.ChargingText;
-    }
-
-    private sealed class DeviceEntry
-    {
-        public DeviceEntry(string key)
-        {
-            Key = key;
-            State = new DeviceBatteryState
-            {
-                Id = string.Empty,
-                Name = "未知设备",
-            };
-        }
-
-        public string Key { get; }
-
-        public DeviceBatteryState State { get; }
-
-        public DeviceCandidate? BleSource { get; set; }
-
-        public DeviceCandidate? ClassicSource { get; set; }
-
-        public Hid24GDeviceInfo? HidSource { get; set; }
-
-        public int MissedCycles { get; set; }
-
-        /// <summary>2.4G 读取的连续失败与累计统计；日志降噪与轮次失败率都用它。</summary>
-        public ProbeHealthTracker Health { get; } = new();
-    }
-
-    private sealed record EnumerationResult(
-        DeviceTransportKind Transport,
-        List<DeviceCandidate> Devices,
-        bool Succeeded,
-        string? Error);
 }

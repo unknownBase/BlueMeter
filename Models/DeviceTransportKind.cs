@@ -9,3 +9,16 @@ public enum DeviceTransportKind
     BluetoothClassic,
     Hid24G,
 }
+
+/// <summary>日志里使用的传输名，例如“BLE”“经典蓝牙”“2.4G”。</summary>
+internal static class DeviceTransportKindText
+{
+    internal static string ToLogText(this DeviceTransportKind kind) =>
+        kind switch
+        {
+            DeviceTransportKind.BluetoothLe => "BLE",
+            DeviceTransportKind.BluetoothClassic => "经典蓝牙",
+            DeviceTransportKind.Hid24G => "2.4G",
+            _ => kind.ToString(),
+        };
+}

@@ -71,14 +71,14 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
                           │                   │
 ┌─────────────────────────┴───────────────────▼──────────────────────────┐
 │ 后台线程 / 线程池                                                      │
-│  DeviceBatteryService（单轮循环、SemaphoreSlim 串行）                  │
-│    ├─ 蓝牙枚举：BLE AQS + Classic AQS + 地址去重                       │
+│  DeviceBatteryService（单轮循环、SemaphoreSlim 串行、轮次编排）         │
+│    ├─ BluetoothDeviceEnumerator：蓝牙枚举、属性解析、适配器状态         │
 │    ├─ 2.4G 枚举：SetupAPI + HID caps（Rapoo/K98 独立厂商路径）          │
 │    ├─ BleBatteryProbe：GATT 读取、CCCD 订阅、ValueChanged              │
 │    ├─ Hid24GProbe：按协议分派 Rapoo / K98                             │
 │    ├─ Rapoo24GProbe：HidD_GetInputReport(0xBB)，只读                   │
 │    ├─ K98_24GProbe：固定 13 4A 只读查询 + overlapped 超时              │
-│    └─ 状态仓库：LastKnownBattery / LastSuccessAt / AlertLatch          │
+│    └─ BatteryStateStore：状态合并、快照生成、AlertLatch                │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -90,7 +90,9 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 | `TrayIconService` | 创建/释放 `TaskbarIcon`、菜单、左键还原、ToolTip、气泡 | 电量读取 |
 | `MainWindow` | Fluent 外壳、关闭隐藏、最小化策略 | 枚举设备 |
 | `MainViewModel` | 设备集合、排序、汇总、命令、设置绑定 | 直接调用 WinRT |
-| `DeviceBatteryService` | 蓝牙与 2.4G 枚举、去重、调度、状态合并、事件 | 窗口/托盘 UI |
+| `DeviceBatteryService` | 生命周期、刷新循环与轮次编排、事件发布、失败日志 | 枚举细节、状态字段维护、窗口/托盘 UI |
+| `BluetoothDeviceEnumerator` | BLE/经典蓝牙枚举、系统属性解析、按地址去重合并、适配器与无线电状态探测 | GATT 连接与读取、状态存储 |
+| `BatteryStateStore` | 设备条目与读数状态、增删去重、探针结果应用、低电量判定、快照生成 | 枚举与读取、事件发布、调度 |
 | `BleBatteryProbe` | 单台 BLE 设备的 GATT 读取与通知订阅 | 全局调度 |
 | `ClassicBatteryProbe` | 单台经典设备的系统属性读取 | GATT |
 | `Rapoo24GDeviceEnumerator` | 枚举 Rapoo 2.4G `24AE:1861` 的 `MI_01/COL05` HID 接口、校验 caps | 读取电量 |
@@ -129,6 +131,8 @@ BlueMeter/
 ├─ Services/                     namespace BlueMeter.Services
 │  ├─ IDeviceBatteryService.cs
 │  ├─ DeviceBatteryService.cs
+│  ├─ BluetoothDeviceEnumerator.cs
+│  ├─ BatteryStateStore.cs
 │  ├─ BleBatteryProbe.cs
 │  ├─ HidInterop.cs
 │  ├─ Hid24GEnumerationResult.cs

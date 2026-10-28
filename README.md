@@ -210,7 +210,9 @@ BlueMeter/
 │  ├─ StartupRegistrationService.cs    # HKCU Run 键开机启动项读写与对齐
 │  ├─ TrayIconService.cs               # TaskbarIcon、菜单、ToolTip、退出
 │  ├─ IDeviceBatteryService.cs
-│  ├─ DeviceBatteryService.cs          # 蓝牙 + 2.4G 枚举、调度、状态、事件
+│  ├─ DeviceBatteryService.cs          # 生命周期、轮次编排、事件
+│  ├─ BluetoothDeviceEnumerator.cs    # 蓝牙枚举、属性解析、适配器状态
+│  ├─ BatteryStateStore.cs             # 设备状态仓库与快照生成
 │  ├─ SystemBatteryPropertyReader.cs   # 经典蓝牙 AEP 电量属性解码
 │  ├─ BleBatteryProbe.cs               # GATT 读取、CCCD 订阅、断连释放
 │  ├─ LowBatteryNotifier.cs            # 低电量聚合与托盘气泡

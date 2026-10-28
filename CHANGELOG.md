@@ -11,6 +11,7 @@
 ### Changed
 
 - 2.4G 读取失败日志降噪：同一设备连续失败只在第一轮记 `Warn`，之后记 `Debug` 并带连续次数，恢复时记 `Info`；轮次完成日志追加 2.4G 累计成功率，便于量化稳定性。
+- `DeviceBatteryService` 按职责拆分为三层：枚举与系统属性解析移到 `BluetoothDeviceEnumerator`，设备条目与快照生成移到 `BatteryStateStore`，服务本身只保留生命周期、轮次编排与事件；对外事件、日志文本、调度预算与超时取值均不变。
 
 ### Fixed
 
