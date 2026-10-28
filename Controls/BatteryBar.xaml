@@ -1,0 +1,38 @@
+<UserControl x:Class="BlueMeter.Controls.BatteryBar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:BlueMeter.Controls"
+             xmlns:models="clr-namespace:BlueMeter.Models"
+             x:Name="Root"
+             Width="120"
+             Height="6"
+             IsHitTestVisible="False"
+             Focusable="False">
+    <Grid>
+        <!-- 轨道始终占位，避免有无电量时行宽跳动。 -->
+        <Border CornerRadius="3" Background="{DynamicResource ControlFillColorSecondaryBrush}" />
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="FillColumn" Width="*" />
+                <ColumnDefinition x:Name="RemainderColumn" Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border x:Name="Fill" Grid.Column="0" CornerRadius="3">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Level, ElementName=Root}" Value="{x:Static models:BatteryLevel.Caution}">
+                                <Setter Property="Background" Value="{DynamicResource SystemFillColorCautionBrush}" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Level, ElementName=Root}" Value="{x:Static models:BatteryLevel.Critical}">
+                                <Setter Property="Background" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

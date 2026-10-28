@@ -65,13 +65,13 @@ public sealed class DeviceListProjectorTests
             Snapshot("Alpha", 60, BatteryReadStatus.Ok),
         };
 
-        // 阈值 50：Zeta 落进低电量组排最前；阈值 5：两台同级，按名称排序。
+        // 阈值 50：Zeta 落进低电量组排最前；阈值 5：两台都落在正常组，同组按电量升序。
         var strict = DeviceListProjector.Create(snapshots, lowBatteryThreshold: 50, showUnsupportedDevices: true);
         var lenient = DeviceListProjector.Create(snapshots, lowBatteryThreshold: 5, showUnsupportedDevices: true);
 
         Assert.Equal("Zeta", strict.Items[0].Name);
         Assert.True(strict.Items[0].IsLowBattery);
-        Assert.Equal("Alpha", lenient.Items[0].Name);
+        Assert.Equal("Zeta", lenient.Items[0].Name);
         Assert.False(lenient.Items[0].IsLowBattery);
     }
 

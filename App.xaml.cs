@@ -223,7 +223,12 @@ public partial class App : Application
         object? sender,
         DeviceServiceStatus status)
     {
-        _mainWindow?.SetGlobalStatus(status.Message);
+        _mainWindow?.SetGlobalStatus(
+            status.Message,
+            status.State is DeviceServiceState.NoAdapter
+                or DeviceServiceState.BluetoothOff
+                or DeviceServiceState.Error
+            || status.Message.Contains("不可用", StringComparison.Ordinal));
 
         if (status.State is DeviceServiceState.NoAdapter
             or DeviceServiceState.BluetoothOff

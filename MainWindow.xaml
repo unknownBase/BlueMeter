@@ -2,113 +2,245 @@
                  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 xmlns:ctrl="clr-namespace:BlueMeter.Controls"
+                 xmlns:conv="clr-namespace:BlueMeter.Converters"
+                 xmlns:models="clr-namespace:BlueMeter.Models"
+                 xmlns:vm="clr-namespace:BlueMeter.ViewModels"
                  Title="BlueMeter"
                  Width="780"
-                 Height="640"
+                 Height="600"
                  MinWidth="560"
-                 MinHeight="460"
+                 MinHeight="420"
                  WindowStartupLocation="CenterScreen"
                  WindowBackdropType="Mica"
                  WindowCornerPreference="Round"
                  ExtendsContentIntoTitleBar="True"
+                 PreviewKeyDown="OnWindowPreviewKeyDown"
                  Icon="pack://application:,,,/Assets/BlueMeter.ico">
+    <ui:FluentWindow.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <conv:DeviceCategoryToSymbolConverter x:Key="CategoryToSymbol" />
+
+        <!-- 设备卡片：图标 / 名称与元信息 / 电量条 / 百分比 -->
+        <DataTemplate x:Key="DeviceCardTemplate">
+            <Border x:Name="Card"
+                    Height="68"
+                    Margin="0,0,0,4"
+                    Padding="12,0"
+                    AutomationProperties.Name="{Binding AutomationName}"
+                    Background="Transparent"
+                    CornerRadius="8">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="Transparent" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsLowBattery}" Value="True">
+                                <Setter Property="Background"
+                                        Value="{DynamicResource SystemFillColorCriticalBackgroundBrush}" />
+                            </DataTrigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background"
+                                        Value="{DynamicResource ControlFillColorSecondaryBrush}" />
+                            </Trigger>
+                            <DataTrigger Binding="{Binding IsStale}" Value="True">
+                                <Setter Property="Opacity" Value="0.72" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="40" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="56" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- 低电量左侧竖条：颜色之外的第二重提示 -->
+                    <Border Width="3"
+                            Margin="-12,10,0,10"
+                            HorizontalAlignment="Left"
+                            CornerRadius="2"
+                            Background="{DynamicResource SystemFillColorCriticalBrush}">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLowBattery}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                    </Border>
+
+                    <Border Width="40"
+                            Height="40"
+                            VerticalAlignment="Center"
+                            Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                            CornerRadius="8">
+                        <ui:SymbolIcon FontSize="20"
+                                       Symbol="{Binding Category, Converter={StaticResource CategoryToSymbol}}" />
+                    </Border>
+
+                    <StackPanel Grid.Column="1"
+                                Margin="12,0,12,0"
+                                VerticalAlignment="Center">
+                        <TextBlock FontSize="14"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding Name}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Margin="0,4,0,0"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   Text="{Binding MetaText}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+
+                    <ctrl:BatteryBar Grid.Column="2"
+                                     Margin="0,0,12,0"
+                                     HorizontalAlignment="Right"
+                                     VerticalAlignment="Center"
+                                     AutomationProperties.Name="{Binding BatteryAutomationName}"
+                                     Level="{Binding BatteryLevel}"
+                                     Percent="{Binding BatteryBarPercent}"
+                                     Visibility="{Binding IsBatteryKnown, Converter={StaticResource BoolToVisibility}}" />
+
+                    <TextBlock Grid.Column="3"
+                               VerticalAlignment="Center"
+                               FontSize="16"
+                               FontWeight="SemiBold"
+                               Text="{Binding BatteryText}"
+                               TextAlignment="Right">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLowBattery}" Value="True">
+                                        <Setter Property="Foreground"
+                                                Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </ui:FluentWindow.Resources>
+
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <ui:TitleBar Grid.Row="0"
                      Title="BlueMeter"
                      Icon="pack://application:,,,/Assets/BlueMeter.ico" />
 
-        <Grid Grid.Row="1" Margin="32,20,32,28">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
+        <!-- 头部：标题、副标题与摘要 -->
+        <Grid Grid.Row="1" Margin="32,20,32,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
 
             <StackPanel>
-                <TextBlock FontSize="24"
+                <TextBlock FontSize="20"
                            FontWeight="SemiBold"
-                           Text="设备电量" />
-                <TextBlock x:Name="GlobalStatusText"
-                           Margin="0,6,0,0"
+                           Text="{Binding HeaderTitle}" />
+                <TextBlock Margin="0,4,0,0"
+                           FontSize="12"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                           Text="正在启动设备刷新…"
-                           TextWrapping="Wrap" />
-                <TextBlock x:Name="SummaryText"
-                           Margin="0,4,0,0"
-                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                           Text="等待蓝牙或 2.4G 设备扫描"
-                           TextWrapping="Wrap" />
+                           Text="{Binding SubtitleText}"
+                           TextTrimming="CharacterEllipsis" />
             </StackPanel>
 
-            <Border Grid.Row="1"
-                    Margin="0,18,0,18"
-                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1"
-                    CornerRadius="8">
-                <Grid>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <ItemsControl x:Name="DeviceList" Margin="18">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Margin="0,0,0,14">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel>
-                                            <TextBlock FontSize="14"
-                                                       FontWeight="SemiBold"
-                                                       Text="{Binding Name}"
-                                                       TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Margin="0,4,0,0"
-                                                       FontSize="12"
-                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                                       Text="{Binding MetaText}"
-                                                       TextTrimming="CharacterEllipsis" />
-                                        </StackPanel>
-                                        <TextBlock Grid.Column="1"
-                                                   Margin="18,0,0,0"
-                                                   VerticalAlignment="Center"
-                                                   FontSize="20"
-                                                   FontWeight="SemiBold"
-                                                   Text="{Binding BatteryText}" />
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
+            <StackPanel Grid.Column="1"
+                        Margin="16,0,0,0"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center">
+                <TextBlock HorizontalAlignment="Right"
+                           FontSize="14"
+                           Text="{Binding SummaryText}" />
+                <TextBlock MaxWidth="360"
+                           Margin="0,4,0,0"
+                           FontSize="12"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                           Text="{Binding ListHintText}"
+                           TextAlignment="Right"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+        </Grid>
 
-                    <TextBlock x:Name="EmptyStateText"
-                               Margin="24"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                               Text="尚未发现蓝牙或 2.4G 设备"
-                               TextAlignment="Center"
-                               TextWrapping="Wrap"
-                               Visibility="Collapsed" />
-                </Grid>
-            </Border>
+        <!-- 列表与状态页：三者互斥显示 -->
+        <Grid Grid.Row="2" Margin="32,0,32,12">
+            <ScrollViewer Padding="0,0,0,12"
+                          VerticalScrollBarVisibility="Auto"
+                          Visibility="{Binding HasDevices, Converter={StaticResource BoolToVisibility}}">
+                <ItemsControl ItemTemplate="{StaticResource DeviceCardTemplate}"
+                              ItemsSource="{Binding Devices}" />
+            </ScrollViewer>
 
-            <!-- 设置面板：M4 完整设置页之前的可用形态，覆盖在列表上方，收起时不影响列表布局。 -->
-            <Border x:Name="SettingsPanel"
-                    Grid.Row="1"
-                    Margin="0,18"
-                    Padding="20,16"
-                    MaxWidth="560"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Top"
-                    Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1"
-                    CornerRadius="8"
-                    Visibility="Collapsed">
+            <StackPanel HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Visibility="{Binding IsInitialLoading, Converter={StaticResource BoolToVisibility}}">
+                <ui:ProgressRing Width="24"
+                                 Height="24"
+                                 HorizontalAlignment="Center"
+                                 IsIndeterminate="True" />
+                <TextBlock Margin="0,12,0,0"
+                           HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Text="正在扫描蓝牙与 2.4G 设备…" />
+                <TextBlock Margin="0,4,0,0"
+                           HorizontalAlignment="Center"
+                           FontSize="12"
+                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                           Text="通常只需要几秒钟" />
+            </StackPanel>
+
+            <StackPanel MaxWidth="440"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}">
+                <ui:SymbolIcon HorizontalAlignment="Center"
+                               FontSize="32"
+                               Symbol="Bluetooth24" />
+                <TextBlock Margin="0,12,0,0"
+                           HorizontalAlignment="Center"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           Text="没有找到蓝牙或 2.4G 设备" />
+                <TextBlock Margin="0,6,0,0"
+                           FontSize="12"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Text="请先在 设置 → 蓝牙和设备 中完成蓝牙配对，或插入已确认的 Rapoo / LINGBAO K98 2.4G 接收器。"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap" />
+                <ui:Button Margin="0,14,0,0"
+                           HorizontalAlignment="Center"
+                           Command="{Binding OpenBluetoothSettingsCommand}"
+                           Content="打开蓝牙设置" />
+            </StackPanel>
+        </Grid>
+
+        <!-- 设置面板：内联卡片，展开时压缩列表高度，不改变窗口尺寸 -->
+        <Border Grid.Row="3"
+                MaxHeight="320"
+                Margin="32,0,32,12"
+                Padding="20,16"
+                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Visibility="{Binding IsSettingsOpen, Converter={StaticResource BoolToVisibility}}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel>
                     <Grid>
                         <TextBlock VerticalAlignment="Center"
@@ -116,7 +248,7 @@
                                    FontWeight="SemiBold"
                                    Text="设置" />
                         <ui:Button HorizontalAlignment="Right"
-                                   Click="OnCloseSettingsClick"
+                                   Command="{Binding ToggleSettingsCommand}"
                                    Content="完成" />
                     </Grid>
 
@@ -170,54 +302,85 @@
                     <ui:ToggleSwitch x:Name="NotificationsSwitch"
                                      Margin="0,14,0,0"
                                      Checked="OnNotificationsToggled"
-                                     Unchecked="OnNotificationsToggled"
-                                     Content="低电量时弹出托盘气泡" />
+                                     Content="低电量时弹出托盘气泡"
+                                     Unchecked="OnNotificationsToggled" />
 
                     <ui:ToggleSwitch x:Name="GattSwitch"
                                      Margin="0,10,0,0"
                                      Checked="OnGattToggled"
-                                     Unchecked="OnGattToggled"
-                                     Content="订阅 BLE 电量通知（关闭后改为轮询）" />
+                                     Content="订阅 BLE 电量通知（关闭后改为轮询）"
+                                     Unchecked="OnGattToggled" />
 
                     <ui:ToggleSwitch x:Name="ShowUnsupportedSwitch"
                                      Margin="0,10,0,0"
                                      Checked="OnShowUnsupportedToggled"
-                                     Unchecked="OnShowUnsupportedToggled"
-                                     Content="在列表中显示不支持电量的设备" />
+                                     Content="在列表中显示不支持电量的设备"
+                                     Unchecked="OnShowUnsupportedToggled" />
 
                     <ui:ToggleSwitch x:Name="RunAtStartupSwitch"
                                      Margin="0,10,0,0"
                                      Checked="OnRunAtStartupToggled"
-                                     Unchecked="OnRunAtStartupToggled"
-                                     Content="开机时自动启动" />
+                                     Content="开机时自动启动"
+                                     Unchecked="OnRunAtStartupToggled" />
 
                     <ui:ToggleSwitch x:Name="StartMinimizedSwitch"
                                      Margin="0,10,0,0"
                                      Checked="OnStartMinimizedToggled"
-                                     Unchecked="OnStartMinimizedToggled"
-                                     Content="启动时最小化到托盘（下次启动生效）" />
+                                     Content="启动时最小化到托盘（下次启动生效）"
+                                     Unchecked="OnStartMinimizedToggled" />
+
+                    <StackPanel Margin="0,14,0,0" Orientation="Horizontal">
+                        <ui:Button Margin="0,0,8,0"
+                                   Command="{Binding OpenLogDirectoryCommand}"
+                                   Content="打开日志目录" />
+                        <ui:Button Command="{Binding HideToTrayCommand}" Content="隐藏到托盘" />
+                    </StackPanel>
 
                     <TextBlock x:Name="SettingsPathText"
-                               Margin="0,14,0,0"
+                               Margin="0,10,0,0"
                                FontSize="12"
-                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                                TextWrapping="Wrap" />
                 </StackPanel>
-            </Border>
+            </ScrollViewer>
+        </Border>
 
-            <StackPanel Grid.Row="2" Orientation="Horizontal">
-                <ui:Button x:Name="RefreshButton"
-                           Margin="0,0,8,0"
-                           Click="OnRefreshClick"
-                           Content="立即刷新" />
-                <ui:Button Margin="0,0,8,0"
-                           Click="OnHideToTrayClick"
-                           Content="隐藏到托盘" />
-                <ui:Button Margin="0,0,8,0"
-                           Click="OnOpenLogDirectoryClick"
-                           Content="打开日志目录" />
-                <ui:Button Click="OnOpenSettingsClick"
+        <!-- 底栏：左侧自动刷新状态，右侧设置与刷新 -->
+        <Grid Grid.Row="4" Margin="32,0,32,16">
+            <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
+                <Ellipse Width="8"
+                         Height="8"
+                         VerticalAlignment="Center">
+                    <Ellipse.Style>
+                        <Style TargetType="Ellipse">
+                            <Setter Property="Fill" Value="{DynamicResource SystemFillColorSuccessBrush}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding StatusSeverity}" Value="{x:Static vm:StatusSeverity.Caution}">
+                                    <Setter Property="Fill" Value="{DynamicResource SystemFillColorCautionBrush}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding StatusSeverity}" Value="{x:Static vm:StatusSeverity.Critical}">
+                                    <Setter Property="Fill" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Ellipse.Style>
+                </Ellipse>
+                <TextBlock Margin="8,0,0,0"
+                           MaxWidth="380"
+                           VerticalAlignment="Center"
+                           FontSize="12"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Text="{Binding GlobalStatus}"
+                           TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+
+            <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
+                <ui:Button Appearance="Secondary"
+                           Command="{Binding ToggleSettingsCommand}"
                            Content="设置" />
+                <ui:Button Margin="8,0,0,0"
+                           Command="{Binding RefreshCommand}"
+                           Content="{Binding RefreshButtonText}" />
             </StackPanel>
         </Grid>
     </Grid>

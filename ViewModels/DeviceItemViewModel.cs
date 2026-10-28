@@ -3,40 +3,176 @@ using BlueMeter.Models;
 namespace BlueMeter.ViewModels;
 
 /// <summary>
-/// M2 预览列表使用的轻量行模型。M4 会替换为完整的 Fluent 设备项。
+/// 列表行模型：把设备快照投影成卡片所需的展示字段。
+/// 行对象在集合里保持稳定（按 <see cref="Id"/> 复用），刷新时原地更新属性，
+/// 只有排序名次变化才会移动位置，避免每轮刷新重建列表导致闪烁。
 /// </summary>
-public sealed class DeviceItemViewModel
+public sealed class DeviceItemViewModel : ObservableObject
 {
+    private DeviceBatterySnapshot _snapshot;
+    private int _lowBatteryThreshold;
+
+    private string _name = string.Empty;
+    private DeviceTransportKind _transport;
+    private BatteryReadStatus _status;
+    private int? _batteryPercent;
+    private string _batteryText = "--";
+    private string _metaText = string.Empty;
+    private bool _isBatteryKnown;
+    private bool _isLowBattery;
+    private bool _isStale;
+    private bool _isUnsupported;
+    private BatteryLevel _batteryLevel = BatteryLevel.Unknown;
+    private string _batteryAutomationName = "电量未知";
+    private string _automationName = string.Empty;
+
     public DeviceItemViewModel(DeviceBatterySnapshot snapshot, int lowBatteryThreshold)
     {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        _snapshot = snapshot;
+        _lowBatteryThreshold = lowBatteryThreshold;
         Id = snapshot.Id;
+        Category = DeviceCategoryClassifier.Classify(snapshot.Name);
+        Apply();
+    }
+
+    public string Id { get; }
+
+    /// <summary>仅用于选图标，不代表设备能力。</summary>
+    public DeviceCategory Category { get; }
+
+    public string Name
+    {
+        get => _name;
+        private set => SetProperty(ref _name, value);
+    }
+
+    public DeviceTransportKind Transport
+    {
+        get => _transport;
+        private set => SetProperty(ref _transport, value);
+    }
+
+    public BatteryReadStatus Status
+    {
+        get => _status;
+        private set => SetProperty(ref _status, value);
+    }
+
+    public int? BatteryPercent
+    {
+        get => _batteryPercent;
+        private set
+        {
+            if (SetProperty(ref _batteryPercent, value))
+            {
+                OnPropertyChanged(nameof(BatteryBarPercent));
+            }
+        }
+    }
+
+    /// <summary>电量条绑定的百分比；无读数时为 null，模板据此隐藏电量条。</summary>
+    public double? BatteryBarPercent => _batteryPercent;
+
+    public string BatteryText
+    {
+        get => _batteryText;
+        private set => SetProperty(ref _batteryText, value);
+    }
+
+    public string MetaText
+    {
+        get => _metaText;
+        private set => SetProperty(ref _metaText, value);
+    }
+
+    public bool IsBatteryKnown
+    {
+        get => _isBatteryKnown;
+        private set => SetProperty(ref _isBatteryKnown, value);
+    }
+
+    public bool IsLowBattery
+    {
+        get => _isLowBattery;
+        private set => SetProperty(ref _isLowBattery, value);
+    }
+
+    /// <summary>暂时不可达（含保留旧值的场景），整行降透明度。</summary>
+    public bool IsStale
+    {
+        get => _isStale;
+        private set => SetProperty(ref _isStale, value);
+    }
+
+    public bool IsUnsupported
+    {
+        get => _isUnsupported;
+        private set => SetProperty(ref _isUnsupported, value);
+    }
+
+    public BatteryLevel BatteryLevel
+    {
+        get => _batteryLevel;
+        private set => SetProperty(ref _batteryLevel, value);
+    }
+
+    public string BatteryAutomationName
+    {
+        get => _batteryAutomationName;
+        private set => SetProperty(ref _batteryAutomationName, value);
+    }
+
+    /// <summary>整行的无障碍名称：设备名、电量、状态与更新时间。</summary>
+    public string AutomationName
+    {
+        get => _automationName;
+        private set => SetProperty(ref _automationName, value);
+    }
+
+    public DateTimeOffset? LastSuccessAt => _snapshot.LastSuccessAt;
+
+    /// <summary>用新快照刷新同一行；阈值变化时一并重算档位。</summary>
+    internal void Update(DeviceBatterySnapshot snapshot, int lowBatteryThreshold)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        _snapshot = snapshot;
+        _lowBatteryThreshold = lowBatteryThreshold;
+        Apply();
+    }
+
+    /// <summary>快照未变但相对时间过期时调用，只重算与时间相关的文案。</summary>
+    public void RefreshTimeText() => Apply();
+
+    private void Apply()
+    {
+        var snapshot = _snapshot;
+        var threshold = _lowBatteryThreshold;
+
         Name = snapshot.Name;
         Transport = snapshot.Transport;
         Status = snapshot.Status;
         BatteryPercent = snapshot.BatteryPercent;
         IsBatteryKnown = snapshot.BatteryPercent.HasValue;
-        IsLowBattery = snapshot.BatteryPercent is int percent && percent <= lowBatteryThreshold;
-        BatteryText = snapshot.BatteryPercent is int value ? $"{value}%" : "--";
+        BatteryText = snapshot.BatteryPercent is int percent ? $"{percent}%" : "--";
+        IsLowBattery = snapshot.BatteryPercent is int low && low <= threshold;
+        IsStale = snapshot.Status is BatteryReadStatus.Stale or BatteryReadStatus.Unavailable;
+        IsUnsupported = snapshot.Status == BatteryReadStatus.NotSupported;
+        BatteryLevel = BatteryLevelCalculator.FromPercent(snapshot.BatteryPercent, threshold);
+        BatteryAutomationName = IsBatteryKnown
+            ? (IsLowBattery ? $"电量 {BatteryText}，电量低" : $"电量 {BatteryText}")
+            : "电量未知";
         MetaText = BuildMetaText(snapshot);
+        AutomationName = BuildAutomationName(snapshot);
     }
 
-    public string Id { get; }
-
-    public string Name { get; }
-
-    public DeviceTransportKind Transport { get; }
-
-    public BatteryReadStatus Status { get; }
-
-    public int? BatteryPercent { get; }
-
-    public bool IsBatteryKnown { get; }
-
-    public bool IsLowBattery { get; }
-
-    public string BatteryText { get; }
-
-    public string MetaText { get; }
+    private static string BuildAutomationName(DeviceBatterySnapshot snapshot)
+    {
+        var battery = snapshot.BatteryPercent is int percent ? $"电量 {percent}%" : "电量未知";
+        return $"{snapshot.Name}，{battery}，{StatusText(snapshot)}";
+    }
 
     private static string BuildMetaText(DeviceBatterySnapshot snapshot)
     {

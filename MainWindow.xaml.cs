@@ -6,7 +6,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
-using System.Windows.Threading;
 using BlueMeter.Models;
 using BlueMeter.Services;
 using BlueMeter.ViewModels;
@@ -19,25 +18,36 @@ public partial class MainWindow : FluentWindow
 {
     private bool _allowClose;
     private IReadOnlyList<DeviceBatterySnapshot>? _pendingSnapshots;
-    private IReadOnlyList<DeviceBatterySnapshot> _snapshots = Array.Empty<DeviceBatterySnapshot>();
     private AppSettings? _settings;
     private bool _suppressSettingEvents;
     private bool _themeWatched = true;
-    private int _updateScheduled;
+    private int _deviceUpdatesScheduled;
 
     public MainWindow()
     {
         InitializeComponent();
-        SystemThemeWatcher.Watch(this);
+
+        ViewModel = new MainViewModel();
+        DataContext = ViewModel;
+        ViewModel.RefreshRequested += OnViewModelRefreshRequested;
+        ViewModel.HideToTrayRequested += OnHideToTrayRequested;
+        ViewModel.OpenLogDirectoryRequested += OnOpenLogDirectoryRequested;
+        ViewModel.OpenBluetoothSettingsRequested += OnOpenBluetoothSettingsRequested;
+
         PopulateNumbers(LowThresholdBox, AppSettings.MinLowBatteryThreshold, AppSettings.MaxLowBatteryThreshold);
         PopulateUnits(RefreshIntervalUnitBox);
         ApplySettings(new AppSettings());
+
+        SystemThemeWatcher.Watch(this);
+        IsVisibleChanged += OnWindowIsVisibleChanged;
     }
 
     public event EventHandler? RefreshRequested;
 
     /// <summary>设置面板发起的修改；由 App 交给 SettingsService 校验、保存并回写界面。</summary>
     public event EventHandler<Action<AppSettings>>? SettingsEditRequested;
+
+    public MainViewModel ViewModel { get; }
 
     /// <summary>设置文件路径，仅用于在设置面板里提示保存位置。</summary>
     public string? SettingsFilePath { get; set; }
@@ -60,8 +70,8 @@ public partial class MainWindow : FluentWindow
         }
 
         _settings = settings.Clone();
+        ViewModel.ApplySettings(settings);
         BindSettings();
-        ApplySnapshots(_snapshots);
     }
 
     public void ShowAndActivate()
@@ -80,10 +90,7 @@ public partial class MainWindow : FluentWindow
         Focus();
     }
 
-    public void AllowClose()
-    {
-        _allowClose = true;
-    }
+    public void AllowClose() => _allowClose = true;
 
     /// <summary>
     /// 可从服务后台线程调用；同一帧内只提交一次 UI 更新。
@@ -92,59 +99,34 @@ public partial class MainWindow : FluentWindow
     {
         Volatile.Write(ref _pendingSnapshots, snapshots);
 
-        if (Interlocked.Exchange(ref _updateScheduled, 1) != 0)
+        if (Interlocked.Exchange(ref _deviceUpdatesScheduled, 1) != 0)
         {
             return;
         }
 
         if (Dispatcher.HasShutdownStarted)
         {
-            Interlocked.Exchange(ref _updateScheduled, 0);
+            Volatile.Write(ref _deviceUpdatesScheduled, 0);
             return;
         }
 
         Dispatcher.BeginInvoke(
-            DispatcherPriority.Background,
+            System.Windows.Threading.DispatcherPriority.Background,
             new Action(() =>
             {
-                Interlocked.Exchange(ref _updateScheduled, 0);
+                Volatile.Write(ref _deviceUpdatesScheduled, 0);
                 var pending = Volatile.Read(ref _pendingSnapshots);
                 if (pending is not null)
                 {
-                    ApplySnapshots(pending);
+                    ViewModel.ApplySnapshots(pending);
                 }
             }));
     }
 
-    public void SetGlobalStatus(string message)
-    {
-        if (Dispatcher.CheckAccess())
-        {
-            GlobalStatusText.Text = message;
-            return;
-        }
+    public void SetGlobalStatus(string message, bool isWarning = false) =>
+        ViewModel.SetStatus(message, isWarning ? StatusSeverity.Caution : StatusSeverity.Normal);
 
-        if (!Dispatcher.HasShutdownStarted)
-        {
-            Dispatcher.BeginInvoke(new Action(() => SetGlobalStatus(message)));
-        }
-    }
-
-    public void SetRefreshing(bool refreshing)
-    {
-        if (!Dispatcher.CheckAccess())
-        {
-            if (!Dispatcher.HasShutdownStarted)
-            {
-                Dispatcher.BeginInvoke(new Action(() => SetRefreshing(refreshing)));
-            }
-
-            return;
-        }
-
-        RefreshButton.IsEnabled = !refreshing;
-        RefreshButton.Content = refreshing ? "正在刷新…" : "立即刷新";
-    }
+    public void SetRefreshing(bool refreshing) => ViewModel.IsRefreshing = refreshing;
 
     protected override void OnClosing(CancelEventArgs e)
     {
@@ -166,6 +148,8 @@ public partial class MainWindow : FluentWindow
     {
         // 启动即托盘且从未显示过的窗口没有句柄，UnwatchSystemTheme 会直接跳过。
         UnwatchSystemTheme();
+        IsVisibleChanged -= OnWindowIsVisibleChanged;
+        ViewModel.Dispose();
         base.OnClosed(e);
     }
 
@@ -197,47 +181,18 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private void ApplySnapshots(IReadOnlyList<DeviceBatterySnapshot> snapshots)
+    /// <summary>窗口隐藏到托盘时暂停“x 分钟前”的计时器，重新显示时立即补一次。</summary>
+    private void OnWindowIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
-        _snapshots = snapshots;
-
-        var settings = _settings ?? new AppSettings();
-        var projection = DeviceListProjector.Create(
-            snapshots,
-            settings.LowBatteryThreshold,
-            settings.ShowUnsupportedDevices);
-        var visible = projection.Items;
-
-        DeviceList.ItemsSource = visible;
-
-        var bleCount = visible.Count(
-            item => item.Transport == DeviceTransportKind.BluetoothLe);
-        var classicCount = visible.Count(
-            item => item.Transport == DeviceTransportKind.BluetoothClassic);
-        var hid24GCount = visible.Count(
-            item => item.Transport == DeviceTransportKind.Hid24G);
-        var hiddenNote = projection.HiddenUnsupportedCount > 0
-            ? $" · 已隐藏 {projection.HiddenUnsupportedCount} 台不支持电量读取的设备"
-            : string.Empty;
-
-        if (visible.Count == 0)
+        if (IsVisible)
         {
-            SummaryText.Text = projection.HiddenUnsupportedCount > 0
-                ? $"已隐藏 {projection.HiddenUnsupportedCount} 台不支持电量读取的设备，可在设置中显示"
-                : "尚未发现蓝牙或 2.4G 设备，稍后会自动重试";
+            ViewModel.StartClock();
+            ViewModel.RefreshRelativeTimes();
         }
         else
         {
-            SummaryText.Text = $"已发现 {visible.Count} 台设备 · BLE {bleCount} · " +
-                               $"经典蓝牙 {classicCount} · 2.4G {hid24GCount}{hiddenNote}";
+            ViewModel.StopClock();
         }
-
-        EmptyStateText.Visibility = visible.Count == 0
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        DeviceList.Visibility = visible.Count == 0
-            ? Visibility.Collapsed
-            : Visibility.Visible;
     }
 
     private void BindSettings()
@@ -456,41 +411,49 @@ public partial class MainWindow : FluentWindow
         RaiseSettingsEdit(settings => settings.StartMinimized = enabled);
     }
 
-    private void OnOpenSettingsClick(object sender, RoutedEventArgs e)
+    /// <summary>Esc 先收起设置面板，再隐藏窗口；F5 立即刷新；Ctrl+, 切换设置面板。</summary>
+    private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        SettingsPanel.Visibility = Visibility.Visible;
+        if (e.Key == Key.Escape)
+        {
+            if (!ViewModel.CloseSettings())
+            {
+                Hide();
+                AppLog.Info("用户按 Esc 隐藏到托盘", "Window");
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.F5)
+        {
+            if (ViewModel.RefreshCommand.CanExecute(null))
+            {
+                ViewModel.RefreshCommand.Execute(null);
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.OemComma && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            ViewModel.ToggleSettings();
+            e.Handled = true;
+        }
     }
 
-    private void OnCloseSettingsClick(object sender, RoutedEventArgs e)
-    {
-        SettingsPanel.Visibility = Visibility.Collapsed;
-    }
-
-    /// <summary>下拉框条目：数值即设置值，文本带单位。</summary>
-    private sealed record NumberOption(int Value, string Unit = "")
-    {
-        public override string ToString() => $"{Value}{Unit}";
-    }
-
-    /// <summary>刷新间隔单位下拉框条目。</summary>
-    private sealed record UnitOption(RefreshIntervalUnit Unit)
-    {
-        public override string ToString() => RefreshIntervalConverter.UnitText(Unit);
-    }
-
-    private void OnRefreshClick(object sender, RoutedEventArgs e)
-    {
-        SetRefreshing(true);
+    private void OnViewModelRefreshRequested(object? sender, EventArgs e) =>
         RefreshRequested?.Invoke(this, EventArgs.Empty);
-    }
 
-    private void OnHideToTrayClick(object sender, RoutedEventArgs e)
+    private void OnHideToTrayRequested(object? sender, EventArgs e)
     {
         Hide();
         AppLog.Info("用户从主窗口隐藏到托盘", "Window");
     }
 
-    private void OnOpenLogDirectoryClick(object sender, RoutedEventArgs e)
+    private void OnOpenLogDirectoryRequested(object? sender, EventArgs e)
     {
         try
         {
@@ -506,5 +469,33 @@ public partial class MainWindow : FluentWindow
         {
             AppLog.Warn("打开日志目录失败", "Window", ex);
         }
+    }
+
+    private void OnOpenBluetoothSettingsRequested(object? sender, EventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "ms-settings:bluetooth",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("打开系统蓝牙设置失败", "Window", ex);
+        }
+    }
+
+    /// <summary>下拉框条目：数值即设置值，文本带单位。</summary>
+    private sealed record NumberOption(int Value, string Unit = "")
+    {
+        public override string ToString() => $"{Value}{Unit}";
+    }
+
+    /// <summary>刷新间隔单位下拉框条目。</summary>
+    private sealed record UnitOption(RefreshIntervalUnit Unit)
+    {
+        public override string ToString() => RefreshIntervalConverter.UnitText(Unit);
     }
 }

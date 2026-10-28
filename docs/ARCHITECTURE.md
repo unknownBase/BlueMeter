@@ -107,7 +107,15 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 | `AppLog` | 文件日志、滚动、脱敏 | 业务判断 |
 | `ProbeHealthTracker` | 单台探针的连续失败与累计成功率；HID 失败日志降噪与轮次统计 | 业务读取逻辑 |
 
-> 当前 `0.3.1` 已实现 `DeviceBatteryService`、`BleBatteryProbe`、`Rapoo24GDeviceEnumerator`、`Rapoo24GProbe`、`K98_24GDeviceEnumerator`、`K98_24GProbe`、合并分派器与 M2 领域模型；主窗口暂用轻量预览列表，`MainViewModel`、`ClassicBatteryProbe`、`BatteryBar` 等留到 M3/M4。
+> 当前 `0.4.3` 之后已实现 `DeviceBatteryService`、`BluetoothDeviceEnumerator`、`BatteryStateStore`、`CycleWaiter`、各探针与合并分派器；主窗口已接上 `MainViewModel` + `BatteryBar`（卡片列表、状态页、命令），`ClassicBatteryProbe` 与 M4 剩余项（不可达/扫描失败 InfoBar、列表行键盘焦点）仍在推进中。
+
+### 3.1 M4 主窗口分层
+
+- `MainWindow` 只做窗口事务：标题栏、关闭隐藏、设置控件绑定、主题监听与快捷键分发；设备列表、摘要与状态全部由 `MainViewModel` 提供。
+- `MainViewModel` 每轮接收完整快照：按 `Id` 复用已有行对象，必要时用 `Move` 调整位置，不重建集合，避免每轮刷新闪烁；排序分组见 UI-SPEC §4.3。
+- `DeviceItemViewModel` 保存快照与阈值；`RefreshTimeText()` 只重算相对时间。窗口隐藏时暂停 30 秒相对时间计时器，重新显示时补一次。
+- `BatteryBar` 用两列星号宽度实现填充比例，`Level`（`BatteryLevel`）决定强调/警告/危险色；数值变化 150ms 缓动，系统关闭动画或高对比度时立即切换。
+- 设备类别（鼠标/键盘/耳机/手柄/手机）由名称关键词推断，仅供选图标，不作为业务判断。
 
 ---
 
@@ -127,6 +135,8 @@ BlueMeter/
 │  ├─ BatteryProbeResult.cs
 │  ├─ K98RetrySchedule.cs
 │  ├─ ProbeHealthTracker.cs
+│  ├─ BatteryLevel.cs
+│  ├─ DeviceCategory.cs
 │  ├─ RefreshIntervalConverter.cs
 │  └─ AppSettings.cs
 ├─ Services/                     namespace BlueMeter.Services
@@ -150,12 +160,13 @@ BlueMeter/
 ├─ ViewModels/                   namespace BlueMeter.ViewModels
 │  ├─ ObservableObject.cs
 │  ├─ RelayCommand.cs
-│  ├─ AsyncRelayCommand.cs
 │  ├─ MainViewModel.cs
+│  ├─ DeviceListProjector.cs
 │  └─ DeviceItemViewModel.cs
 ├─ Controls/                     namespace BlueMeter.Controls
 │  └─ BatteryBar.xaml(.cs)
 ├─ Converters/                   namespace BlueMeter.Converters
+│  └─ DeviceCategoryToSymbolConverter.cs
 └─ Assets/BlueMeter.ico
 ```
 

@@ -26,10 +26,10 @@ BlueMeter 是一个常驻 Windows 系统托盘的轻量桌面应用，用来汇�
 | 低电量通知与托盘摘要 | ✅ 已完成（`0.4.0`） |
 | 设置接线：开机启动 / 列表过滤 / 刷新间隔与阈值 | ✅ 已完成（`0.4.2`，面板形态） |
 | 稳定性收口：托盘退出异常、K98 重试与唤醒提示、间隔即时生效 | ✅ 已完成（`0.4.3`） |
-| Fluent 主窗口与完整列表 | ⏳ 待实施（M4；当前为轻量预览列表） |
+| Fluent 主窗口与卡片列表、电量条、状态页 | 🚧 基本完成（M4；剩余不可达/扫描失败提示条与行键盘焦点） |
 | 稳定性加固 | ⏳ 待实施（M5） |
 
-> 当前版本为 `0.4.3`：M1 的托盘与窗口生命周期保持可用；M2 接入已配对 BLE/经典设备枚举、地址去重、BLE GATT 电量读取、通知订阅、刷新调度与状态事件；`0.3.1` 增加 Rapoo 与 LINGBAO K98 2.4G 接收器的只读 HID 电量读取。`0.4.0` 补齐经典蓝牙电量（系统 AEP 属性）、低电量聚合托盘气泡与统一托盘摘要；`0.4.1` 让经典蓝牙在连接后每轮重读属性，并对可连接的设备追加 BLE GATT 兜底；`0.4.2` 把开机启动、列表过滤、刷新间隔与低电量阈值真正接线，并给出可用的设置面板；`0.4.3` 做稳定性收口（K98 探针内重试与失败降噪、“按键唤醒后刷新”提示、刷新间隔即时生效、托盘退出不再出现窗口句柄异常）并按职责拆分设备电量服务。完整 Fluent 列表与设置页留到 M4。
+> 当前版本为 `0.4.3`：M1 的托盘与窗口生命周期保持可用；M2 接入已配对 BLE/经典设备枚举、地址去重、BLE GATT 电量读取、通知订阅、刷新调度与状态事件；`0.3.1` 增加 Rapoo 与 LINGBAO K98 2.4G 接收器的只读 HID 电量读取。`0.4.0` 补齐经典蓝牙电量（系统 AEP 属性）、低电量聚合托盘气泡与统一托盘摘要；`0.4.1` 让经典蓝牙在连接后每轮重读属性，并对可连接的设备追加 BLE GATT 兜底；`0.4.2` 把开机启动、列表过滤、刷新间隔与低电量阈值真正接线，并给出可用的设置面板；`0.4.3` 做稳定性收口（K98 探针内重试与失败降噪、“按键唤醒后刷新”提示、刷新间隔即时生效、托盘退出不再出现窗口句柄异常）并按职责拆分设备电量服务。当前 `[Unreleased]` 已接上 M4 主窗口：`MainViewModel` + 卡片式列表 + 电量条 + 加载/空状态与快捷键，剩余不可达/扫描失败提示条与列表行键盘焦点。
 
 当前基线：
 
@@ -190,7 +190,7 @@ BlueMeter/
 ├─ BlueMeter.sln
 ├─ BlueMeter.csproj
 ├─ App.xaml / App.xaml.cs              # 组合根：单实例、托盘、服务、窗口、异常、退出
-├─ MainWindow.xaml / MainWindow.xaml.cs # FluentWindow + 轻量设备预览 + 关闭隐藏
+├─ MainWindow.xaml / MainWindow.xaml.cs # FluentWindow 外壳 + 卡片列表 + 设置面板 + 关闭隐藏
 ├─ AssemblyInfo.cs
 ├─ app.manifest                        # Per-Monitor V2 DPI / Win10+ 兼容性
 ├─ Assets/
@@ -204,6 +204,8 @@ BlueMeter/
 │  ├─ DeviceBatterySnapshot.cs
 │  ├─ BatteryProbeResult.cs
 │  ├─ LowBatteryNotice.cs
+│  ├─ BatteryLevel.cs                  # 电量档位与阈值换算
+│  ├─ DeviceCategory.cs                # 类型关键词 → 图标类别
 │  └─ DeviceServiceStatus.cs
 ├─ Services/
 │  ├─ AppLog.cs                        # 按天日志、7 天保留、地址脱敏
@@ -227,9 +229,16 @@ BlueMeter/
 │  ├─ K98_24GDeviceEnumerator.cs       # K98 col01 接口枚举
 │  └─ K98_24GProbe.cs                  # 13 4A 只读电量查询解析
 ├─ ViewModels/
-│  ├─ DeviceItemViewModel.cs           # M2 预览行模型
+│  ├─ ObservableObject.cs              # INotifyPropertyChanged 基类
+│  ├─ RelayCommand.cs                  # 命令
+│  ├─ MainViewModel.cs                 # 行集合、排序、摘要、状态、命令
+│  ├─ DeviceItemViewModel.cs           # 可原地更新的列表行模型
 │  └─ DeviceListProjector.cs           # 列表排序与“隐藏不支持设备”投影
-├─ BlueMeter.Tests/                    # xUnit 单元测试（属性解码 / 托盘摘要 / 低电量文案 / 列表投影 / 开机启动命令）
+├─ Controls/
+│  └─ BatteryBar.xaml / .cs            # 圆角轨道 + 百分比填充的电量条
+├─ Converters/
+│  └─ DeviceCategoryToSymbolConverter.cs
+├─ BlueMeter.Tests/                    # xUnit 单元测试（属性解码 / 托盘摘要 / 低电量文案 / 列表投影 / 开机启动命令 / 行模型）
 ├─ README.md
 ├─ ROADMAP.md
 ├─ CONTRIBUTING.md
