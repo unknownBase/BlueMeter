@@ -25,9 +25,14 @@ public sealed class K98_24GProbe
     private const int DeadlineSliceMilliseconds = 200;
     private const int ErrorTimeout = 1460;
 
+    /// <param name="coldStart">
+    /// 进程内尚未成功读到过电量。此时接收器刚被系统枚举，先用版本查询预热并使用更宽的
+    /// 尝试次数与预算；一旦成功过就走常规计划，避免每轮都拖长耗时。
+    /// </param>
     public BatteryProbeResult ReadBattery(
         Hid24GDeviceInfo device,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool coldStart = false)
     {
         ArgumentNullException.ThrowIfNull(device);
 
@@ -45,10 +50,18 @@ public sealed class K98_24GProbe
             var request = BuildRequest(PowerCommand);
             var response = new byte[ReportLength];
             var startedAt = Environment.TickCount64;
-            var budgetDeadline = startedAt + K98RetrySchedule.TotalBudgetMilliseconds;
+            var attemptCount = K98RetrySchedule.AttemptCountFor(coldStart);
+            var budgetDeadline = startedAt + K98RetrySchedule.TotalBudgetMillisecondsFor(coldStart);
             var lastWriteError = 0;
 
-            for (var attempt = 0; attempt < K98RetrySchedule.AttemptCount; attempt++)
+            // 冷启动时接收器可能还在省电状态：先发一次只读版本查询把它叫醒，
+            // 避免第一条电量查询连同快速重发一起被丢弃。预热耗时计入同一预算。
+            if (coldStart)
+            {
+                TryWakeUp(handle, budgetDeadline, cancellationToken);
+            }
+
+            for (var attempt = 0; attempt < attemptCount; attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -65,7 +78,13 @@ public sealed class K98_24GProbe
                         out var writeError))
                 {
                     lastWriteError = writeError;
-                    if (!WaitBeforeRetry(handle, attempt, budgetDeadline, cancellationToken))
+                    if (!WaitBeforeRetry(
+                            handle,
+                            attempt,
+                            attemptCount,
+                            coldStart,
+                            budgetDeadline,
+                            cancellationToken))
                     {
                         break;
                     }
@@ -80,6 +99,7 @@ public sealed class K98_24GProbe
                     response,
                     request,
                     attempt,
+                    coldStart,
                     budgetDeadline,
                     cancellationToken);
                 if (result is not null)
@@ -87,7 +107,13 @@ public sealed class K98_24GProbe
                     return result;
                 }
 
-                if (!WaitBeforeRetry(handle, attempt, budgetDeadline, cancellationToken))
+                if (!WaitBeforeRetry(
+                        handle,
+                        attempt,
+                        attemptCount,
+                        coldStart,
+                        budgetDeadline,
+                        cancellationToken))
                 {
                     break;
                 }
@@ -103,7 +129,7 @@ public sealed class K98_24GProbe
 
             return BatteryProbeResult.Unavailable(
                 "HidRead",
-                $"未收到 K98 2.4G 电量响应（{K98RetrySchedule.AttemptCount} 次尝试，" +
+                $"未收到 K98 2.4G 电量响应（{attemptCount} 次尝试，" +
                 $"用时 {(Environment.TickCount64 - startedAt) / 1000.0:0.0} 秒）");
         }
     }
@@ -118,13 +144,14 @@ public sealed class K98_24GProbe
         byte[] response,
         byte[] request,
         int attempt,
+        bool coldStart,
         long budgetDeadline,
         CancellationToken cancellationToken)
     {
         var now = Environment.TickCount64;
         var budgetRemaining = (int)Math.Max(0, budgetDeadline - now);
         var deadline = now + Math.Min(
-            K98RetrySchedule.ReadTimeoutMilliseconds(attempt),
+            K98RetrySchedule.ReadTimeoutMilliseconds(attempt, coldStart),
             budgetRemaining);
         var nextResendAt = now + K98RetrySchedule.QuickResendIntervalMilliseconds;
         var resendCount = 0;
@@ -192,11 +219,13 @@ public sealed class K98_24GProbe
     private static bool WaitBeforeRetry(
         SafeFileHandle handle,
         int attempt,
+        int attemptCount,
+        bool coldStart,
         long budgetDeadline,
         CancellationToken cancellationToken)
     {
         // 已经是最后一次尝试，不再退避与唤醒。
-        if (attempt + 1 >= K98RetrySchedule.AttemptCount)
+        if (attempt + 1 >= attemptCount)
         {
             return false;
         }
@@ -207,7 +236,9 @@ public sealed class K98_24GProbe
             return false;
         }
 
-        var delay = Math.Min(K98RetrySchedule.RetryDelayMilliseconds(attempt), remaining);
+        var delay = Math.Min(
+            K98RetrySchedule.RetryDelayMilliseconds(attempt, coldStart),
+            remaining);
         if (delay > 0 && cancellationToken.WaitHandle.WaitOne(delay))
         {
             cancellationToken.ThrowIfCancellationRequested();

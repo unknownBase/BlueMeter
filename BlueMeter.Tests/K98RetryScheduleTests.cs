@@ -37,6 +37,42 @@ public sealed class K98RetryScheduleTests
     }
 
     [Fact]
+    public void ColdStart_UsesMoreAttemptsAndBudget()
+    {
+        Assert.Equal(6, K98RetrySchedule.AttemptCountFor(coldStart: true));
+        Assert.Equal(4, K98RetrySchedule.AttemptCountFor(coldStart: false));
+        Assert.Equal(10000, K98RetrySchedule.TotalBudgetMillisecondsFor(coldStart: true));
+        Assert.Equal(6500, K98RetrySchedule.TotalBudgetMillisecondsFor(coldStart: false));
+    }
+
+    [Fact]
+    public void ColdStartReadTimeouts_StayWithinColdStartBudget()
+    {
+        var total = 0;
+        var attempts = K98RetrySchedule.AttemptCountFor(coldStart: true);
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            total += K98RetrySchedule.ReadTimeoutMilliseconds(attempt, coldStart: true);
+        }
+
+        Assert.True(
+            total <= K98RetrySchedule.TotalBudgetMillisecondsFor(coldStart: true),
+            $"冷启动读超时总和 {total} 超出预算 {K98RetrySchedule.TotalBudgetMillisecondsFor(coldStart: true)}");
+    }
+
+    [Fact]
+    public void ColdStartReadTimeouts_AreNonDecreasing()
+    {
+        var attempts = K98RetrySchedule.AttemptCountFor(coldStart: true);
+        for (var attempt = 1; attempt < attempts; attempt++)
+        {
+            Assert.True(
+                K98RetrySchedule.ReadTimeoutMilliseconds(attempt, coldStart: true) >=
+                K98RetrySchedule.ReadTimeoutMilliseconds(attempt - 1, coldStart: true));
+        }
+    }
+
+    [Fact]
     public void RetryDelay_IncreasesWithAttempt()
     {
         // 最后一次尝试后不再退避，退避表比尝试次数少一项。

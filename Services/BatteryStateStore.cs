@@ -406,6 +406,7 @@ internal sealed class BatteryStateStore
                 ReceiverId = entry.State.ReceiverId,
                 VendorName = entry.State.VendorName,
                 Protocol = entry.HidSource?.Protocol ?? Hid24GProtocol.Unknown,
+                ConsecutiveFailures = entry.Health.ConsecutiveFailures,
             })
             .OrderBy(snapshot => snapshot.Status is BatteryReadStatus.Stale or BatteryReadStatus.Unavailable)
             .ThenBy(snapshot => snapshot.Name, StringComparer.CurrentCultureIgnoreCase)

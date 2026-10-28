@@ -33,4 +33,10 @@ public sealed record DeviceBatterySnapshot(
 
     /// <summary>HID 2.4G 接收器使用的厂商协议；蓝牙设备为 <see cref="Hid24GProtocol.Unknown"/>。</summary>
     public Hid24GProtocol Protocol { get; init; } = Hid24GProtocol.Unknown;
+
+    /// <summary>
+    /// 2.4G 探针的连续失败轮数；蓝牙设备恒为 0。
+    /// 用于区分“刚启动的第一轮失败”与“确实已连续多轮不可达”，避免过早打扰用户。
+    /// </summary>
+    public int ConsecutiveFailures { get; init; }
 }

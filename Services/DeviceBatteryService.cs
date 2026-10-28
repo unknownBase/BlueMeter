@@ -441,10 +441,15 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
 
             MarkReading(entry);
 
+            // K98 接收器刚被系统枚举时还在省电状态，首条查询容易被丢弃：
+            // 进程内首次成功前用冷启动计划（读取前预热 + 6 次尝试/10 秒预算），
+            // 成功过之后回到常规计划，避免每轮拖长。
+            var coldStart = entry.State.LastSuccessAt is null;
+
             BatteryProbeResult result;
             try
             {
-                result = _hid24GProbe.ReadBattery(entry.HidSource!, cancellationToken);
+                result = _hid24GProbe.ReadBattery(entry.HidSource!, cancellationToken, coldStart);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

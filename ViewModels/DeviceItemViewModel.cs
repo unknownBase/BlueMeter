@@ -238,7 +238,10 @@ public sealed class DeviceItemViewModel : ObservableObject
     private static bool NeedsWakeHint(DeviceBatterySnapshot snapshot) =>
         snapshot.Transport == DeviceTransportKind.Hid24G &&
         snapshot.Protocol == Hid24GProtocol.LingbaoK98 &&
-        snapshot.Status is BatteryReadStatus.Stale or BatteryReadStatus.Unavailable;
+        (snapshot.Status is BatteryReadStatus.Stale or BatteryReadStatus.Unavailable) &&
+        // 进程刚启动时接收器还在被系统枚举，首轮失败不代表键盘休眠；
+        // 连续两轮失败才提示按键，避免刚启动就误伤。
+        snapshot.ConsecutiveFailures >= 2;
 
     private static string FormatRelative(DateTimeOffset timestamp)
     {

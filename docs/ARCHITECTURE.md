@@ -99,7 +99,7 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 | `Rapoo24GDeviceEnumerator` | 枚举 Rapoo 2.4G `24AE:1861` 的 `MI_01/COL05` HID 接口、校验 caps | 读取电量 |
 | `Rapoo24GProbe` | `HidD_GetInputReport(0xBB)` 只读电量解析 | 发送配置/输出报告 |
 | `K98_24GDeviceEnumerator` | 枚举 LINGBAO K98 2.4G `3554:FA09` 的 `MI_01/COL01` HID 接口、校验 caps | 读取电量 |
-| `K98_24GProbe` | 固定 `13 4A` 只读查询、校验 checksum、解析电量/充电状态；`K98RetrySchedule` 控制重试（4 次尝试、递增读超时、重发前 `13 07` 唤醒、6.5 秒预算） | 写配置、feature `0x06` 猜测 |
+| `K98_24GProbe` | 固定 `13 4A` 只读查询、校验 checksum、解析电量/充电状态；`K98RetrySchedule` 控制重试：常规 4 次尝试 / 6.5 秒预算，进程内首次成功前为冷启动（读电量前先发 `13 07` 预热、6 次尝试 / 10 秒预算） | 写配置、feature `0x06` 猜测 |
 | `Hid24GDeviceEnumerator` | 合并 Rapoo/K98 枚举结果，保留单厂商失败状态 | 解析电量 |
 | `Hid24GProbe` | 按 `Hid24GProtocol` 分派厂商探针 | 共享命令格式 |
 | `HidInterop` | SetupAPI/HID P/Invoke、caps/字符串、K98 固定查询的 overlapped 读写 | 写配置/设置 |
@@ -661,7 +661,7 @@ UI 展示规则：
 
 “暂时不可达”不等于“设备离线”：可能只是本轮 GATT 失败。文案避免断言设备已关闭。
 
-LINGBAO K98 接收器在键盘休眠时不回包，因此 `Stale` / `Unavailable` 时副标题追加“，按键唤醒后刷新”（依据快照的 `Hid24GProtocol.LingbaoK98`），提示用户先激活键盘再重试；其他设备不追加该提示。
+LINGBAO K98 接收器在键盘休眠时不回包，因此 `Stale` / `Unavailable` 且快照的 `ConsecutiveFailures` 达到 2 时，副标题追加“，按键唤醒后刷新”（依据快照的 `Hid24GProtocol.LingbaoK98`），提示用户先激活键盘再重试；首轮失败只显示普通的“暂时不可达”，避免接收器刚被枚举、尚未被叫醒时误伤用户；其他设备不追加该提示。
 
 ---
 
