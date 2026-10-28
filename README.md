@@ -22,11 +22,12 @@ BlueMeter 是一个常驻 Windows 系统托盘的轻量桌面应用，用来汇�
 | 已配对设备发现与 BLE/经典分类 | ✅ 已完成（`0.3.0`） |
 | BLE 电量读取与通知订阅 | ✅ 已完成（`0.3.0`） |
 | Rapoo / LINGBAO K98 2.4G 接收器只读电量 | ✅ 已完成（`0.3.1`） |
-| 经典蓝牙电量读取 | ⏳ 待实施（M3） |
+| 经典蓝牙电量读取 | ✅ 已完成（`0.4.0`，`0.4.1` 补 GATT 兜底） |
+| 低电量通知与托盘摘要 | ✅ 已完成（`0.4.0`） |
 | Fluent 主窗口与完整列表 | ⏳ 待实施（M4；当前为轻量预览列表） |
-| 低电量通知与稳定性加固 | ⏳ 待实施（M3/M5） |
+| 稳定性加固 | ⏳ 待实施（M5） |
 
-> 当前版本为 `0.3.1`：M1 的托盘与窗口生命周期保持可用；M2 已接入已配对 BLE/经典设备枚举、地址去重、BLE GATT 电量读取、通知订阅、刷新调度与状态事件。`0.3.1` 增加 Rapoo 与 LINGBAO K98 2.4G 接收器的只读 HID 电量读取，并将 2.4G 作为独立传输显示。主窗口提供轻量设备预览列表，托盘“立即刷新”已启用。经典蓝牙真实电量读取、低电量托盘通知和完整 Fluent 列表分别留到 M3/M4。
+> 当前版本为 `0.4.1`：M1 的托盘与窗口生命周期保持可用；M2 接入已配对 BLE/经典设备枚举、地址去重、BLE GATT 电量读取、通知订阅、刷新调度与状态事件；`0.3.1` 增加 Rapoo 与 LINGBAO K98 2.4G 接收器的只读 HID 电量读取。`0.4.0` 补齐经典蓝牙电量（系统 AEP 属性）、低电量聚合托盘气泡与统一托盘摘要；`0.4.1` 让经典蓝牙在连接后每轮重读属性，并对可连接的设备追加 BLE GATT 兜底，读不到时不再误判“不支持”。完整 Fluent 列表与设置页留到 M4。
 
 当前基线：
 
@@ -45,7 +46,7 @@ BlueMeter 是一个常驻 Windows 系统托盘的轻量桌面应用，用来汇�
 - **BLE 电量**：通过 GATT 电池服务 `0x180F` / 电量特征值 `0x2A19` 读取；优先订阅 `ValueChanged`，低频轮询兜底。
 - **Rapoo 2.4G 电量（只读）**：枚举 `VID_24AE&PID_1861` 接收器的 `MI_01/COL05` HID 接口，读取 `0xBB` input report；只读取，不发送 output/config 报告。显示为 `2.4G 接收器`，与 BLE/经典蓝牙严格区分。
 - **LINGBAO K98 2.4G 电量（只读）**：枚举 `VID_3554&PID_FA09` 接收器的 `MI_01/COL01` HID 接口，发送固定的 20 字节只读查询（`13 4A 01 ...`），解析 `13 4A 01 00 02 <battery> <status> ...`；不写配置，不使用 feature `0x06` 猜测电量。显示为 `2.4G 接收器`。
-- **经典蓝牙电量**：读取系统设备属性 `System.Devices.BatteryLife`；读不到时明确显示“不支持”，不做伪值。
+- **经典蓝牙电量**：连接状态下每轮重读系统设备属性 `System.Devices.BatteryLife`；属性缺失且设备 LE 侧可连接时，按蓝牙地址走 GATT `0x180F` 兜底；两者都读不到时如实显示“暂时不可达”并下轮重试，不伪造数值。
 - **状态保留**：每台设备维护 `LastKnownBattery`，读取失败保留上次成功值与时间，并标记“暂时不可达”。
 - **低电量提醒**：电量跌破阈值（默认 20%）时弹出一次托盘气泡；带恢复迟滞，避免反复打扰。
 - **Fluent UI**：`ui:FluentWindow` + Mica/Acrylic、圆角、系统标题栏、Snap Layout；列表展示名称、类型、电量、电量条、更新时间与状态。
@@ -106,7 +107,7 @@ BlueMeter 是一个常驻 Windows 系统托盘的轻量桌面应用，用来汇�
 - LINGBAO K98 2.4G 设备：接收器已插入，且系统识别为 `VID_3554&PID_FA09` 的 `MI_01/COL01` HID 接口。
 - 设备支持电量上报：
   - BLE 设备需暴露标准电池服务 `0x180F`；
-  - 经典蓝牙设备需在系统设备属性中暴露 `System.Devices.BatteryLife`；
+  - 经典蓝牙设备需在系统设备属性中暴露 `System.Devices.BatteryLife`；耳机这类经典蓝牙设备通常不暴露该属性，只能依靠 LE 侧 GATT；
   - Rapoo 2.4G 接收器需匹配已确认的 `0xBB` 只读报告格式；
   - LINGBAO K98 2.4G 接收器需匹配已确认的 `13 4A` 只读查询格式。
 
@@ -125,6 +126,9 @@ dotnet build .\BlueMeter.csproj -c Debug
 
 # 运行
 dotnet run --project .\BlueMeter.csproj
+
+# 单元测试（纯逻辑：电量解码、托盘摘要、低电量文案）
+dotnet test .\BlueMeter.Tests\BlueMeter.Tests.csproj
 ```
 
 使用 Visual Studio 2022（17.8+，安装“.NET 桌面开发”工作负载）打开 `BlueMeter.sln` 亦可。
@@ -156,6 +160,7 @@ dotnet publish .\BlueMeter.csproj -c Release -r win-x64 --self-contained true
 | 托盘菜单“立即刷新” | 触发一轮手动扫描；若正在扫描则最多排队一次，不并发 |
 | 托盘菜单“退出” | 设置退出标志，保存设置、释放托盘与 BLE 订阅，彻底结束进程 |
 | 悬停托盘图标 | 显示一行摘要；完整设备列表在主窗口中 |
+| 低电量 | 电量跌破阈值（默认 20%）时弹一条托盘气泡；多设备同轮告警合并为一条，回升到阈值 + 5% 以上才重新武装 |
 
 托盘 ToolTip 受 Windows `NOTIFYICONDATA.szTip` 长度限制（约 127 字符），因此只显示摘要，不显示完整列表。
 
@@ -173,7 +178,7 @@ dotnet publish .\BlueMeter.csproj -c Release -r win-x64 --self-contained true
 
 ## 项目结构
 
-当前仓库（`0.3.1`）：
+当前仓库（`0.4.1`）：
 
 ```text
 BlueMeter/
@@ -201,7 +206,10 @@ BlueMeter/
 │  ├─ TrayIconService.cs               # TaskbarIcon、菜单、ToolTip、退出
 │  ├─ IDeviceBatteryService.cs
 │  ├─ DeviceBatteryService.cs          # 蓝牙 + 2.4G 枚举、调度、状态、事件
+│  ├─ SystemBatteryPropertyReader.cs   # 经典蓝牙 AEP 电量属性解码
 │  ├─ BleBatteryProbe.cs               # GATT 读取、CCCD 订阅、断连释放
+│  ├─ LowBatteryNotifier.cs            # 低电量聚合与托盘气泡
+│  ├─ TraySummaryBuilder.cs            # 托盘摘要文案
 │  ├─ HidInterop.cs                    # HID P/Invoke（Rapoo 只读；K98 固定只读查询）
 │  ├─ Hid24GEnumerationResult.cs       # 合并枚举结果
 │  ├─ Hid24GDeviceEnumerator.cs        # Rapoo/K98 枚举分发
@@ -212,6 +220,7 @@ BlueMeter/
 │  └─ K98_24GProbe.cs                  # 13 4A 只读电量查询解析
 ├─ ViewModels/
 │  └─ DeviceItemViewModel.cs           # M2 预览行模型
+├─ BlueMeter.Tests/                    # xUnit 单元测试（属性解码 / 托盘摘要 / 低电量文案）
 ├─ README.md
 ├─ ROADMAP.md
 ├─ CONTRIBUTING.md
@@ -288,8 +297,7 @@ BlueMeter/
 | 限制 | 说明 | 影响 |
 | --- | --- | --- |
 | Mica 仅 Windows 11 | Windows 10 上 WPF-UI 会退化为纯色/兼容背景 | 视觉差异，不影响功能 |
-| 经典蓝牙无统一电量 API | 仅部分设备在系统属性中暴露 `System.Devices.BatteryLife` | 部分耳机、手柄显示“不支持” |
-| 经典蓝牙读取尚未接入 | M2 只完成经典设备枚举与分类，真实电量读取在 M3 | 列表中经典设备显示“经典蓝牙电量待 M3 接入” |
+| 经典蓝牙无统一电量 API | 优先读系统属性 `System.Devices.BatteryLife`，缺失时按地址走 BLE GATT；两者都不可用时显示“暂时不可达”并持续重试 | 不支持 GATT 的耳机（如 HUAWEI FreeBuds 7i 实测 `Le.IsConnectable=False`）读不到电量，Windows 设置页的数值与第三方应用不通 |
 | 主窗口为 M2 预览列表 | 完整 Fluent 设备列表、电量条与设置页在 M4 | 当前仅提供名称、类型、状态与百分比 |
 | BLE 需要设备可连接且广播电量服务 | 设备休眠、被厂商软件独占、未暴露 `0x180F` 时读取失败 | 显示“暂时不可达”或“--” |
 | 2.4G 支持是厂商专用 | 仅匹配已确认的 Rapoo `VID_24AE&PID_1861` 的 `MI_01/COL05` 与 K98 `VID_3554&PID_FA09` 的 `MI_01/COL01`；不承诺其他 2.4G/USB 接收器 | 其他接收器不显示，避免猜测协议 |

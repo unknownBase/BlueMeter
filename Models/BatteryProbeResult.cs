@@ -58,4 +58,18 @@ public sealed record BatteryProbeResult
             FailureMessage = message,
             HResult = hResult,
         };
+
+    /// <summary>
+    /// 经典蓝牙设备离线时，系统属性里的电量是上次上报的缓存值。
+    /// 保留该值并标记为 <see cref="BatteryReadStatus.Stale"/>，不能当作实时读数。
+    /// </summary>
+    public static BatteryProbeResult Cached(
+        int batteryPercent,
+        string? chargingText = null) =>
+        new()
+        {
+            Status = BatteryReadStatus.Stale,
+            BatteryPercent = batteryPercent,
+            ChargingText = chargingText,
+        };
 }

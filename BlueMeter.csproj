@@ -11,9 +11,9 @@
     <RootNamespace>BlueMeter</RootNamespace>
     <ApplicationIcon>Assets\BlueMeter.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.3.1</Version>
-    <AssemblyVersion>0.3.1.0</AssemblyVersion>
-    <FileVersion>0.3.1.0</FileVersion>
+    <Version>0.4.1</Version>
+    <AssemblyVersion>0.4.1.0</AssemblyVersion>
+    <FileVersion>0.4.1.0</FileVersion>
     <NeutralLanguage>zh-CN</NeutralLanguage>
   </PropertyGroup>
 
@@ -24,6 +24,14 @@
 
   <ItemGroup>
     <Resource Include="Assets\BlueMeter.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 测试工程位于子目录，主工程不参与编译。 -->
+    <Compile Remove="BlueMeter.Tests\**" />
+    <EmbeddedResource Remove="BlueMeter.Tests\**" />
+    <None Remove="BlueMeter.Tests\**" />
+    <Page Remove="BlueMeter.Tests\**" />
   </ItemGroup>
 
 </Project>

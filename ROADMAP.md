@@ -1,6 +1,6 @@
 # BlueMeter Roadmap
 
-版本策略：SemVer。`0.x` 允许接口和 UI 调整；`1.0.0` 表示一期范围全部达到验收标准。文档基线为 `0.1.0-docs`，当前代码版本为 `0.3.1`。
+版本策略：SemVer。`0.x` 允许接口和 UI 调整；`1.0.0` 表示一期范围全部达到验收标准。文档基线为 `0.1.0-docs`，当前代码版本为 `0.4.1`。
 
 状态图例：✅ 完成 ｜ 🚧 进行中 ｜ ⏳ 未开始 ｜ ⛔ 暂缓
 
@@ -14,7 +14,7 @@
 | M1 | `0.2.0` | 工程配置、托盘、窗口生命周期 | ✅ | 已完成 |
 | M2 | `0.3.0` | 设备发现与 BLE 电量读取 | ✅ | 已完成 |
 | M2.1 | `0.3.1` | Rapoo / LINGBAO K98 2.4G 只读电量 | ✅ | 已完成 |
-| M3 | `0.4.0` | 经典蓝牙电量、低电量通知、托盘摘要 | ⏳ | 1–2 人日 |
+| M3 | `0.4.0` | 经典蓝牙电量、低电量通知、托盘摘要 | 🚧 代码完成，待实机复核 | 1–2 人日 |
 | M4 | `0.5.0` | Fluent 主窗口、列表与设置 | ⏳ | 2–3 人日 |
 | M5 | `0.9.0` | 稳定性、性能、兼容性加固 | ⏳ | 2–3 人日 |
 | M6 | `1.0.0` | 发布准备 | ⏳ | 0.5–1 人日 |
@@ -212,47 +212,58 @@
 
 ---
 
-## M3 — 经典蓝牙、低电量通知与托盘摘要 ⏳
+## M3 — 经典蓝牙、低电量通知与托盘摘要 🚧
 
 **目标**：补齐系统属性可读的经典设备；低电量只提醒一次；托盘摘要准确。
 
-> M2 已在服务层实现低电量阈值判断、`LowBatteryAlerted` 闩锁与 `LowBatteryDetected` 事件；M3 继续负责经典蓝牙读取、通知聚合和托盘气泡。
+> `0.4.0` 代码已完成，`0.4.1` 做了实测修正。经典蓝牙电量连接后每轮重读系统属性，属性缺失且 LE 侧可连接时按地址走 GATT 兜底；低电量告警由 `LowBatteryNotifier` 合并后发托盘气泡；托盘摘要统一由 `TraySummaryBuilder` 构建。实机已枚举到 1 台经典蓝牙设备（HUAWEI FreeBuds 7i），它既不暴露系统电量属性、LE 侧也不可连接，因此显示“暂时不可达”；带电量属性或可连接 BLE 的经典设备仍需补验。
 
 ### 任务
 
-- [ ] **M3-1 经典蓝牙读取**
-  - 从 `DeviceInformation.Properties` 读取 `System.Devices.BatteryLife`（`byte`）
+- [x] **M3-1 经典蓝牙读取**
+  - 从 `DeviceInformation.Properties` 读取 `System.Devices.BatteryLife`（`byte`）；连接状态下每轮 `CreateFromIdAsync` 重读一次属性
   - `101` 视为未知；`BatteryPlusCharging` 的 `+100` 编码用于识别充电状态
   - `BatteryPlusChargingText` 作为状态文案补充（可选）
-  - 无属性时标 `NotSupported`，不参与低电量告警
-- [ ] **M3-2 低电量规则**
+  - 属性缺失且 `Aep.Bluetooth.Le.IsConnectable` 不为 `false` 时，按蓝牙地址走 GATT `0x180F` 兜底
+  - 两条路径都读不到时标 `Unavailable`（界面“暂时不可达”）并下轮重试；只有设备明确无电池服务时才标 `NotSupported`
+- [x] **M3-2 低电量规则**
   - 默认阈值 20%，可配置 5–50%
   - 触发：首次有效读数 ≤ 阈值，或从 > 阈值降到 ≤ 阈值
   - 每设备闩锁 `AlertLatch`；读数回升到 `阈值 + 5` 以上才重新武装
   - 只在 `Ok` 状态告警；`Stale` / `Unavailable` / `NotSupported` 不告警
   - 同一轮多设备告警合并为一条气泡，避免轰炸
-- [ ] **M3-3 托盘气泡**
+- [x] **M3-3 托盘气泡**
   - `TaskbarIcon.ShowNotification("BlueMeter", message, NotificationIcon.Warning)`
   - 文案示例：`鼠标电量低：15%`、`2 个设备电量低，最低：键盘 12%`
   - 通知被系统关闭/专注助手拦截时不重试、不崩溃，仅记录日志
-- [ ] **M3-4 托盘 ToolTip**
+- [x] **M3-4 托盘 ToolTip**
   - 有有效电量：单设备 `鼠标 15%`；多设备 `3 个设备，最低 15%`
   - 只有旧值：`鼠标 15%（暂时不可达）`
   - 无设备：`BlueMeter · 未发现蓝牙或 2.4G 设备`
   - 扫描中且无数据：`BlueMeter · 正在扫描…`
   - 超长名称截断，整串 ≤ 120 字符
-- [ ] **M3-5 托盘菜单联动**
+- [x] **M3-5 托盘菜单联动**
   - “立即刷新”调用服务并禁用至本轮结束
   - “退出”走统一退出流程
   - 菜单项支持键盘操作与高对比度
 
+### 实现说明
+
+- 经典蓝牙电量优先读系统 AEP 属性；枚举拿到的是快照，设备连上后系统会补写属性，所以连接状态下每轮用 `DeviceInformation.CreateFromIdAsync`（2 秒超时）重读一次。
+- 属性仍缺失且 `Aep.Bluetooth.Le.IsConnectable` 不为 `false` 时，用 `BluetoothLEDevice.FromBluetoothAddressAsync` 打开 LE 通道读 GATT `0x180F`；非可连接设备直接跳过，避免每轮白等 8 秒。
+- 设备离线时属性只是系统缓存值：保留读数但标 `Stale`，不刷新 `LastSuccessAt`，也不触发低电量告警。
+- 低电量告警在 `LowBatteryNotifier` 里做 1 秒合并窗口，同一设备重复触发以最后一次读数为准；`LowBatteryNotificationsEnabled` 关闭时静默丢弃。
+- 蓝牙不可用时，经典蓝牙设备与 BLE 设备一起标为不可达，避免残留“已读取”状态。
+
 ### 验收
 
-1. 经典蓝牙鼠标若系统属性有电量，能显示；无属性设备显示“不支持”。
+1. 经典蓝牙鼠标若系统属性有电量，能显示；属性缺失但 LE 可连接时能走 GATT 读到；两者都不可用时显示“暂时不可达”。
 2. 电量跌破阈值只弹一次；回升再跌破可再次提醒。
 3. 关闭通知后功能不报错。
 4. 托盘摘要与实际最低设备一致，长度不超限。
 5. 托盘菜单“立即刷新”不产生并发扫描。
+
+> 验收状态：2026-10-28 实机（蓝牙适配器 BARROT USB）已枚举到 1 台经典蓝牙设备（HUAWEI FreeBuds 7i）。实测 `System.Devices.BatteryLife` 为 null、`Aep.Bluetooth.Le.IsConnectable=False`、按地址打开 GATT 返回 `Unreachable`，现在正确显示“暂时不可达”而不是“不支持电量读取”（Windows 设置页的数值走系统内部通道，第三方应用不可读）。带电量属性的经典设备（多数鼠标/键盘）仍需补验第 1、4 条。
 
 ---
 

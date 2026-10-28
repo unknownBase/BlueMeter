@@ -16,6 +16,7 @@ public partial class App : Application
     private SettingsService? _settingsService;
     private IDeviceBatteryService? _deviceBatteryService;
     private TrayIconService? _trayIconService;
+    private LowBatteryNotifier? _lowBatteryNotifier;
     private MainWindow? _mainWindow;
     private CancellationTokenSource? _appCts;
     private int _exitRequested;
@@ -58,6 +59,7 @@ public partial class App : Application
         {
             _appCts?.Cancel();
             _deviceBatteryService?.Dispose();
+            _lowBatteryNotifier?.Dispose();
             _trayIconService?.Dispose();
             _settingsService?.Save();
             AppLog.Info("BlueMeter 已退出", "App");
@@ -89,7 +91,11 @@ public partial class App : Application
         _trayIconService.ShowRequested += OnShowRequested;
         _trayIconService.ExitRequested += OnExitRequested;
         _trayIconService.RefreshRequested += OnRefreshRequested;
-        _trayIconService.SetToolTip("BlueMeter · 正在扫描蓝牙与 2.4G 设备…");
+        _trayIconService.SetToolTip(TraySummaryBuilder.Scanning());
+
+        _lowBatteryNotifier = new LowBatteryNotifier(
+            () => _settingsService?.Current.LowBatteryNotificationsEnabled ?? false,
+            message => _trayIconService?.ShowNotification(message));
 
         _mainWindow = new MainWindow();
         _mainWindow.RefreshRequested += OnRefreshRequested;
@@ -149,8 +155,10 @@ public partial class App : Application
 
     private async void OnRefreshRequested(object? sender, EventArgs e)
     {
-        if (_deviceBatteryService is null ||
-            _appCts is null ||
+        var service = _deviceBatteryService;
+        var appCts = _appCts;
+        if (service is null ||
+            appCts is null ||
             Volatile.Read(ref _exitRequested) != 0)
         {
             return;
@@ -159,9 +167,14 @@ public partial class App : Application
         _trayIconService?.SetRefreshBusy(true);
         _mainWindow?.SetRefreshing(true);
 
+        if (service.Current.Count == 0)
+        {
+            _trayIconService?.SetToolTip(TraySummaryBuilder.Scanning());
+        }
+
         try
         {
-            await _deviceBatteryService.RefreshAsync(manual: true, _appCts.Token);
+            await service.RefreshAsync(manual: true, appCts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -192,11 +205,11 @@ public partial class App : Application
             _deviceBatteryService?.Status is
                 { State: DeviceServiceState.NoAdapter or DeviceServiceState.BluetoothOff } serviceStatus)
         {
-            _trayIconService?.SetToolTip($"BlueMeter · {serviceStatus.Message}");
+            _trayIconService?.SetToolTip(TraySummaryBuilder.StatusHint(serviceStatus.Message));
             return;
         }
 
-        _trayIconService?.SetToolTip(BuildTrayToolTip(snapshots));
+        _trayIconService?.SetToolTip(TraySummaryBuilder.Build(snapshots));
     }
 
     private void OnDeviceStatusChanged(
@@ -213,7 +226,7 @@ public partial class App : Application
                 snapshot => snapshot.Transport == DeviceTransportKind.Hid24G) == true;
             if (!hasHid24G)
             {
-                _trayIconService?.SetToolTip($"BlueMeter · {status.Message}");
+                _trayIconService?.SetToolTip(TraySummaryBuilder.StatusHint(status.Message));
             }
         }
     }
@@ -222,41 +235,7 @@ public partial class App : Application
         object? sender,
         IReadOnlyList<LowBatteryNotice> notices)
     {
-        AppLog.Debug(
-            $"收到 {notices.Count} 条低电量事件，M3 将聚合为托盘通知",
-            "Battery");
-    }
-
-    private static string BuildTrayToolTip(
-        IReadOnlyList<DeviceBatterySnapshot> snapshots)
-    {
-        if (snapshots.Count == 0)
-        {
-            return "BlueMeter · 未发现蓝牙或 2.4G 设备";
-        }
-
-        var withBattery = snapshots
-            .Where(snapshot => snapshot.BatteryPercent.HasValue)
-            .ToList();
-
-        if (withBattery.Count == 0)
-        {
-            return "BlueMeter · 已发现设备，暂无可读电量";
-        }
-
-        if (withBattery.Count == 1)
-        {
-            var snapshot = withBattery[0];
-            var suffix = snapshot.Status == BatteryReadStatus.Ok
-                ? string.Empty
-                : "（暂时不可达）";
-            return $"BlueMeter · {snapshot.Name} {snapshot.BatteryPercent}%{suffix}";
-        }
-
-        var lowest = withBattery.Min(snapshot => snapshot.BatteryPercent!.Value);
-        var hasStaleValue = withBattery.Any(snapshot => snapshot.Status != BatteryReadStatus.Ok);
-        return $"BlueMeter · {snapshots.Count} 台设备，最低 {lowest}%" +
-               (hasStaleValue ? "（含旧值）" : string.Empty);
+        _lowBatteryNotifier?.Notify(notices);
     }
 
     private void OnExitRequested(object? sender, EventArgs e)

@@ -147,7 +147,6 @@ public sealed class BleBatteryProbe : IDisposable
         CancellationToken cancellationToken)
     {
         BluetoothLEDevice? device = null;
-        GattDeviceService? service = null;
 
         try
         {
@@ -159,6 +158,76 @@ public sealed class BleBatteryProbe : IDisposable
                     "系统未返回 BluetoothLEDevice");
             }
 
+            return await ReadOnceAsync(device, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return BatteryProbeResult.Unavailable(
+                "ReadTransient",
+                ex.Message,
+                ex.HResult);
+        }
+        finally
+        {
+            DisposeQuietly(device);
+        }
+    }
+
+    /// <summary>
+    /// 按蓝牙地址读取电池服务。用于双模耳机等“经典蓝牙配对、但电量只从 BLE 侧 GATT 上报”的设备：
+    /// 这类设备不会出现在已配对 BLE 列表里，只能通过地址打开 LE 通道。
+    /// </summary>
+    public async Task<BatteryProbeResult> ReadByBluetoothAddressAsync(
+        ulong address,
+        CancellationToken cancellationToken)
+    {
+        BluetoothLEDevice? device = null;
+
+        try
+        {
+            device = await BluetoothLEDevice
+                .FromBluetoothAddressAsync(address)
+                .AsTask(cancellationToken)
+                .ConfigureAwait(false);
+
+            if (device is null)
+            {
+                return BatteryProbeResult.NotSupported(
+                    "FromBluetoothAddressAsync",
+                    "系统未提供该地址的 BLE 通道");
+            }
+
+            return await ReadOnceAsync(device, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return BatteryProbeResult.Unavailable(
+                "ReadByAddress",
+                ex.Message,
+                ex.HResult);
+        }
+        finally
+        {
+            DisposeQuietly(device);
+        }
+    }
+
+    private static async Task<BatteryProbeResult> ReadOnceAsync(
+        BluetoothLEDevice device,
+        CancellationToken cancellationToken)
+    {
+        GattDeviceService? service = null;
+
+        try
+        {
             var servicesResult = await device
                 .GetGattServicesForUuidAsync(GattServiceUuids.Battery, BluetoothCacheMode.Uncached)
                 .AsTask(cancellationToken)
@@ -207,21 +276,9 @@ public sealed class BleBatteryProbe : IDisposable
                 exponent,
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            return BatteryProbeResult.Unavailable(
-                "ReadTransient",
-                ex.Message,
-                ex.HResult);
-        }
         finally
         {
             DisposeQuietly(service);
-            DisposeQuietly(device);
         }
     }
 

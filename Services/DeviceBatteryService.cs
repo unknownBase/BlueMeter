@@ -311,11 +311,13 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         var bluetoothUsable = bluetoothStatus.State is not (
             DeviceServiceState.NoAdapter or DeviceServiceState.BluetoothOff);
         var bluetoothEnumerationSucceeded = false;
+
         var bleEnumerationSucceeded = false;
+        var classicEnumerationSucceeded = false;
 
         if (!bluetoothUsable)
         {
-            MarkBleDevicesUnavailable();
+            MarkBluetoothDevicesUnavailable();
             await ReleaseAllSubscriptionsAsync(bluetoothStatus.Message).ConfigureAwait(false);
         }
         else
@@ -326,6 +328,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             var classicResult = await classicTask.ConfigureAwait(false);
 
             bleEnumerationSucceeded = bleResult.Succeeded;
+            classicEnumerationSucceeded = classicResult.Succeeded;
             bluetoothEnumerationSucceeded = bleResult.Succeeded || classicResult.Succeeded;
             if (bluetoothEnumerationSucceeded)
             {
@@ -417,6 +420,9 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         var hidReadTargets = hidResult.Succeeded
             ? GetHid24GReadTargets()
             : new List<DeviceEntry>();
+        var classicReadTargets = classicEnumerationSucceeded
+            ? GetClassicReadTargets()
+            : new List<DeviceEntry>();
         var notices = new List<LowBatteryNotice>();
         var successCount = 0;
         var failureCount = 0;
@@ -468,6 +474,114 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             PublishSnapshots();
 
             if (!result.IsSuccess)
+            {
+                LogProbeFailure(entry, result);
+            }
+        }
+
+        // 经典蓝牙：系统属性可读时直接应用；没有属性时对已连接的双模设备用 BLE GATT 兜底。
+        foreach (var entry in classicReadTargets)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+
+            var classic = entry.ClassicSource!;
+            BatteryProbeResult result;
+            var usedBleFallback = false;
+            var propertyPercent = classic.BatteryPercent;
+            var chargingText = classic.ChargingText ?? (classic.IsCharging ? "充电中" : null);
+
+            if (classic.IsConnected)
+            {
+                // 枚举拿到的是快照属性，连接后耳机会在系统属性里补上电量，所以每轮再读一次。
+                var (freshPercent, freshChargingText) = await ReadSystemBatteryAsync(
+                    classic.Id,
+                    cancellationToken).ConfigureAwait(false);
+                if (freshPercent.HasValue)
+                {
+                    propertyPercent = freshPercent;
+                    chargingText = freshChargingText ?? chargingText;
+                }
+            }
+
+            if (propertyPercent is int classicPercent)
+            {
+                result = classic.IsConnected
+                    ? BatteryProbeResult.Ok(classicPercent, supportsNotifications: false, chargingText)
+                    : BatteryProbeResult.Cached(classicPercent, chargingText);
+            }
+            else if (classic.IsConnected && classic.Address.HasValue && classic.LeConnectable != false)
+            {
+                var budget = CycleBudget - stopwatch.Elapsed;
+                var timeout = budget < PerDeviceTimeout ? budget : PerDeviceTimeout;
+                if (timeout < TimeSpan.FromSeconds(1))
+                {
+                    skippedCount++;
+                    continue;
+                }
+
+                MarkReading(entry);
+                usedBleFallback = true;
+
+                using var deviceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                deviceCts.CancelAfter(timeout);
+
+                try
+                {
+                    result = await _probe
+                        .ReadByBluetoothAddressAsync(classic.Address.Value, deviceCts.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (OperationCanceledException)
+                {
+                    result = BatteryProbeResult.Unavailable(
+                        "Timeout",
+                        $"经典蓝牙 BLE 兜底读取超过 {timeout.TotalSeconds:0.#} 秒");
+                }
+                catch (Exception ex)
+                {
+                    result = BatteryProbeResult.Unavailable(
+                        "ClassicBleFallback",
+                        ex.Message,
+                        ex.HResult);
+                }
+            }
+            else if (classic.IsConnected)
+            {
+                // 系统属性没有电量、LE 侧又不可连接（耳机常见的双模形态）：不要下“不支持”的结论，下轮再试。
+                result = BatteryProbeResult.Unavailable(
+                    "BleNotConnectable",
+                    "系统未上报电量，且设备未开放 BLE 连接");
+            }
+            else
+            {
+                // 未连接且系统没有电量属性：当前没有可用数据源，保留旧值并标为暂时不可达。
+                result = BatteryProbeResult.Unavailable("ClassicDisconnected", "设备未连接");
+            }
+
+            if (result.IsSuccess)
+            {
+                successCount++;
+            }
+            else if (result.Status != BatteryReadStatus.NotSupported)
+            {
+                failureCount++;
+            }
+
+            ApplyProbeResult(entry, result, notices);
+            PublishSnapshots();
+
+            if (usedBleFallback && !result.IsSuccess)
+            {
+                LogProbeFailure(entry, result);
+            }
+            else if (!usedBleFallback && result.Status == BatteryReadStatus.NotSupported)
             {
                 LogProbeFailure(entry, result);
             }
@@ -550,6 +664,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         AppLog.Info(
             $"第 {cycleNumber} 轮完成：{Current.Count} 台设备，" +
             $"{readTargets.Count} 台 BLE，{hidReadTargets.Count} 台 2.4G，" +
+            $"{classicReadTargets.Count} 台经典蓝牙，" +
             $"{successCount} 成功，{failureCount} 失败，" +
             $"{skippedCount} 跳过，用时 {stopwatch.Elapsed.TotalSeconds:0.0} 秒",
             "Cycle");
@@ -752,6 +867,14 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         var address = TryGetAddress(properties);
         var isConnected = GetBoolean(properties, "System.Devices.Aep.IsConnected");
         var chargingText = GetString(properties, "System.Devices.BatteryPlusChargingText");
+        var battery = SystemBatteryPropertyReader.Read(properties);
+        var leConnectable = GetNullableBoolean(properties, "System.Devices.Aep.Bluetooth.Le.IsConnectable");
+
+        if (kind == DeviceTransportKind.BluetoothClassic)
+        {
+            // 经典蓝牙没有统一电量 API，属性缺失时要能看到实际拿到的键值。
+            AppLog.Debug($"经典蓝牙属性：{name} → {DescribeSystemBattery(properties)}", "Enum");
+        }
 
         return new DeviceCandidate(
             device.Id,
@@ -759,7 +882,24 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             address,
             kind,
             isConnected,
-            string.IsNullOrWhiteSpace(chargingText) ? null : chargingText.Trim());
+            string.IsNullOrWhiteSpace(chargingText) ? null : chargingText.Trim(),
+            battery.Percent,
+            battery.Charging,
+            leConnectable);
+    }
+
+    private static string DescribeSystemBattery(IReadOnlyDictionary<string, object> properties)
+    {
+        var life = properties.TryGetValue(SystemBatteryPropertyReader.BatteryLifeKey, out var rawLife)
+            ? rawLife?.ToString() ?? "null"
+            : "缺失";
+        var combined = properties.TryGetValue(SystemBatteryPropertyReader.BatteryPlusChargingKey, out var rawCombined)
+            ? rawCombined?.ToString() ?? "null"
+            : "缺失";
+        var (percent, charging) = SystemBatteryPropertyReader.Read(properties);
+
+        return $"BatteryLife={life}，BatteryPlusCharging={combined}，" +
+               $"解析={percent?.ToString() ?? "无"}{(charging ? "（充电）" : string.Empty)}";
     }
 
     private static bool IsClearlyNotDevice(string name) =>
@@ -823,6 +963,23 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             bool boolean => boolean,
             string text when bool.TryParse(text, out var parsed) => parsed,
             _ => false,
+        };
+    }
+
+    private static bool? GetNullableBoolean(
+        IReadOnlyDictionary<string, object> properties,
+        string key)
+    {
+        if (!properties.TryGetValue(key, out var value) || value is null)
+        {
+            return null;
+        }
+
+        return value switch
+        {
+            bool boolean => boolean,
+            string text when bool.TryParse(text, out var parsed) => parsed,
+            _ => null,
         };
     }
 
@@ -905,6 +1062,58 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
                 .OrderByDescending(entry => entry.State.IsConnected)
                 .ThenBy(entry => entry.State.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
+        }
+    }
+
+    /// <summary>
+    /// 只出现在经典蓝牙列表、且没有 BLE 来源的设备：它们只能靠系统属性读电量。
+    /// </summary>
+    private List<DeviceEntry> GetClassicReadTargets()
+    {
+        lock (_stateLock)
+        {
+            return _devices.Values
+                .Where(entry => entry.ClassicSource is not null && entry.BleSource is null)
+                .OrderByDescending(entry => entry.State.IsConnected)
+                .ThenBy(entry => entry.State.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+        }
+    }
+
+    /// <summary>
+    /// 重新读取单台设备的系统电量属性（不经枚举缓存）。失败时返回空值，由调用方决定后续兜底。
+    /// </summary>
+    private static async Task<(int? Percent, string? ChargingText)> ReadSystemBatteryAsync(
+        string deviceId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(2));
+
+            var info = await DeviceInformation
+                .CreateFromIdAsync(deviceId, DevicePropertyKeys)
+                .AsTask(cts.Token)
+                .ConfigureAwait(false);
+
+            if (info is null)
+            {
+                return (null, null);
+            }
+
+            var battery = SystemBatteryPropertyReader.Read(info.Properties);
+            var chargingText = GetString(info.Properties, "System.Devices.BatteryPlusChargingText");
+            return (battery.Percent, string.IsNullOrWhiteSpace(chargingText) ? null : chargingText.Trim());
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug($"重新读取系统电量属性失败：{ex.Message}", "ClassicProbe");
+            return (null, null);
         }
     }
 
@@ -1030,6 +1239,11 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
                 case BatteryReadStatus.Ok when result.BatteryPercent.HasValue:
                     ApplySuccessLocked(entry, result.BatteryPercent.Value, now, notices);
                     break;
+                case BatteryReadStatus.Stale when result.BatteryPercent.HasValue:
+                    // 经典蓝牙离线时的系统缓存值：保留读数，但不刷新 LastSuccessAt。
+                    entry.State.BatteryPercent = result.BatteryPercent.Value;
+                    entry.State.Status = BatteryReadStatus.Stale;
+                    break;
                 case BatteryReadStatus.NotSupported:
                     entry.State.Status = BatteryReadStatus.NotSupported;
                     entry.State.BatteryPercent = null;
@@ -1069,13 +1283,13 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         }
     }
 
-    private void MarkBleDevicesUnavailable()
+    private void MarkBluetoothDevicesUnavailable()
     {
         lock (_stateLock)
         {
             foreach (var entry in _devices.Values)
             {
-                if (entry.State.Transport != DeviceTransportKind.BluetoothLe)
+                if (entry.State.Transport == DeviceTransportKind.Hid24G)
                 {
                     continue;
                 }
@@ -1156,9 +1370,12 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             $"{result.FailureStage} {result.FailureMessage}" +
             (result.HResult.HasValue ? $" HRESULT=0x{result.HResult.Value:X8}" : string.Empty);
 
-        var category = entry.State.Transport == DeviceTransportKind.Hid24G
-            ? "Hid24G"
-            : "BleProbe";
+        var category = entry.State.Transport switch
+        {
+            DeviceTransportKind.Hid24G => "Hid24G",
+            DeviceTransportKind.BluetoothClassic => "ClassicProbe",
+            _ => "BleProbe",
+        };
 
         if (result.Status == BatteryReadStatus.NotSupported)
         {
@@ -1407,7 +1624,10 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         ulong? Address,
         DeviceTransportKind Transport,
         bool IsConnected,
-        string? ChargingText);
+        string? ChargingText,
+        int? BatteryPercent,
+        bool IsCharging,
+        bool? LeConnectable);
 
     private sealed class MergedCandidate
     {

@@ -6,8 +6,52 @@
 
 ### Added
 
-- 待实现：经典蓝牙电量、低电量通知与托盘摘要（M3）
 - 待实现：Fluent 主窗口、完整设备列表与设置（M4）
+
+## [0.4.1] - 2026-10-28
+
+### Added
+
+- 经典蓝牙连接时每轮重新读取系统电量属性（`DeviceInformation.CreateFromIdAsync`，2 秒超时），不再只用枚举阶段的快照，设备连上后系统补上的电量能被读到。
+- 经典蓝牙没有系统属性时，按蓝牙地址走 BLE GATT 兜底（`BleBatteryProbe.ReadByBluetoothAddressAsync`，电池服务 `0x180F` / 电量特征值 `0x2A19`）；仅对 `System.Devices.Aep.Bluetooth.Le.IsConnectable` 不为 `false` 的设备尝试，避免每轮白等 8 秒。
+- 枚举日志新增经典蓝牙电量属性原文（`BatteryLife` / `BatteryPlusCharging` / 解析结果），便于定位“系统有电量但应用读不到”。
+
+### Changed
+
+- 经典蓝牙不再因为一时读不到就判定“不支持电量读取”：未连接、系统未上报且 BLE 不可连接时统一标记 `Unavailable`，界面显示“暂时不可达”，下一轮继续重试。
+- 版本提升至 0.4.1。
+
+### Notes
+
+- 实测 HUAWEI FreeBuds 7i（经典蓝牙已连接）：`System.Devices.BatteryLife` 为 null、`Aep.Bluetooth.Le.IsConnectable=False`、按蓝牙地址打开 GATT 返回 `Unreachable`。这类耳机只把电量报给 Windows 自己的 UI，第三方应用暂无可读接口，因此显示“暂时不可达”而非误报“不支持”。
+
+## [0.4.0] - 2026-10-28
+
+### Added
+
+- 经典蓝牙电量读取：枚举阶段缓存 `System.Devices.BatteryLife` 与 `System.Devices.BatteryPlusCharging`，读取阶段直接应用，不建立 GATT 连接、不占用单轮读取预算。
+- `SystemBatteryPropertyReader`：统一解析系统电量属性，`BatteryPlusCharging` 的 100–200 识别充电态，`101`/`0` 与越界值视为未知。
+- 经典蓝牙设备离线时保留系统缓存值并标记 `Stale`，不当作实时读数、不触发低电量告警。
+- `LowBatteryNotifier`：低电量提醒在 1 秒窗口内合并为一条托盘气泡，单设备显示“鼠标电量低：15%”，多设备显示“2 个设备电量低，最低：键盘 12%”。
+- `TraySummaryBuilder`：托盘 ToolTip 统一构建，覆盖无设备、扫描中、单设备、多设备、只有旧值五种状态，整串 ≤ 120 字符。
+- 低电量通知开关 `LowBatteryNotificationsEnabled` 生效；关闭后只记录日志，不弹气泡。
+
+### Changed
+
+- 蓝牙不可用时，经典蓝牙设备与 BLE 设备一起标记为不可达，避免残留“已读取”状态。
+- 经典蓝牙读取失败日志归类为 `ClassicProbe`，`NotSupported` 只记 Debug。
+- 主窗口移除“经典蓝牙电量待 M3 接入”占位文案。
+- 版本提升至 0.4.0。
+
+### Fixed
+
+- 退出应用时 `SystemThemeWatcher.UnWatch` 在窗口句柄已销毁后抛 `InvalidOperationException`，被全局异常处理器记为错误；现改为忽略并记 Debug。
+- 手动刷新在无设备时不再显示上一轮的托盘摘要，改为“正在扫描…”。
+
+### Notes
+
+- 本机已检测到蓝牙适配器（BARROT USB）。实机枚举到 1 台经典蓝牙设备（HUAWEI FreeBuds 7i），系统未暴露 `System.Devices.BatteryLife`，按设计显示“不支持电量读取”；带有电量属性的经典/BLE 设备需补验。
+- 新增 `BlueMeter.Tests`（xUnit，26 个用例）：覆盖属性解码、托盘摘要、低电量文案与合并窗口；`dotnet test` 全部通过。
 
 ## [0.3.1] - 2026-10-27
 

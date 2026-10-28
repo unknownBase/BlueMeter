@@ -89,7 +89,6 @@ public sealed class DeviceItemViewModel
             BatteryReadStatus.NotSupported => "不支持电量读取",
             _ => snapshot.Transport switch
             {
-                DeviceTransportKind.BluetoothClassic => "经典蓝牙电量待 M3 接入",
                 DeviceTransportKind.Hid24G => "等待读取",
                 _ => "等待扫描",
             },

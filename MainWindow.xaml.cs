@@ -128,7 +128,20 @@ public partial class MainWindow : FluentWindow
 
     protected override void OnClosed(EventArgs e)
     {
-        SystemThemeWatcher.UnWatch(this);
+        // 窗口句柄已销毁时 WPF-UI 可能抛 InvalidOperationException，不影响退出流程。
+        try
+        {
+            SystemThemeWatcher.UnWatch(this);
+        }
+        catch (InvalidOperationException ex)
+        {
+            AppLog.Debug($"取消主题监听时窗口句柄已释放：{ex.Message}", "Window");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn("取消系统主题监听失败", "Window", ex);
+        }
+
         base.OnClosed(e);
     }
 
