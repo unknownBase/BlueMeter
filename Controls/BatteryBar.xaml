@@ -20,7 +20,8 @@
                 <ColumnDefinition x:Name="RemainderColumn" Width="*" />
             </Grid.ColumnDefinitions>
 
-            <Border x:Name="Fill" Grid.Column="0" CornerRadius="4">
+            <!-- 左端圆角由填充自身提供（右端在未满 100% 时是直角，切断处不误读）。 -->
+            <Border x:Name="Fill" Grid.Column="0" CornerRadius="4,0,0,4">
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Background" Value="{DynamicResource SystemFillColorSuccessBrush}" />

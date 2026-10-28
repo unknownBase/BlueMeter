@@ -97,6 +97,9 @@ public partial class BatteryBar : UserControl
         FillColumn.Width = new GridLength(clamped, GridUnitType.Star);
         RemainderColumn.Width = new GridLength(100 - clamped, GridUnitType.Star);
 
+        // 满电时右端也要跟着轨道归圆，否则会盖住轨道的右半圆。
+        Fill.CornerRadius = clamped >= 99.5 ? new CornerRadius(4) : new CornerRadius(4, 0, 0, 4);
+
         // 0% 时隐藏填充，避免留一条圆角残影。
         Fill.Visibility = clamped <= 0 ? Visibility.Collapsed : Visibility.Visible;
     }

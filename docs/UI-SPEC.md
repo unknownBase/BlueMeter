@@ -203,6 +203,8 @@
 - 尺寸：宽 120，高 8；圆角 4。
 - 轨道：`ControlStrongFillColorDefaultBrush`（透明度 0.55），保证在 Mica / 卡片背景上仍能看出槽形。
 - 填充：宽度 = `Value / 100 × 120`，`Value` 钳制 0–100。
+- 圆角归属：左端圆角由填充自身提供（`CornerRadius="4,0,0,4"`），未满 100% 时切断处为直角；满电时四角归圆，避免盖住轨道右半圆。
+- 只有“网格列（120）+ 控件（120）+ 右对齐”，控件不得再加右外边距：多出的外边距会让控件向左溢出并被列边界裁掉，左端圆角会看起来变成直角。
 - 颜色阈值（`threshold` 取自设置，默认 20）：
   - `value ≤ threshold`：`SystemFillColorCriticalBrush`（红）
   - `threshold < value < threshold + 20`：`SystemFillColorCautionBrush`（黄）
