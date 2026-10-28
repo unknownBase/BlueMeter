@@ -75,8 +75,9 @@ public sealed class DeviceItemViewModel
             _ => "未知传输",
         };
 
-    private static string StatusText(DeviceBatterySnapshot snapshot) =>
-        snapshot.Status switch
+    private static string StatusText(DeviceBatterySnapshot snapshot)
+    {
+        var text = snapshot.Status switch
         {
             BatteryReadStatus.Ok => snapshot.LastSuccessAt is null
                 ? "已读取"
@@ -93,6 +94,15 @@ public sealed class DeviceItemViewModel
                 _ => "等待扫描",
             },
         };
+
+        // K98 接收器在键盘休眠时不回包，重试也无效，只能提示用户先按键激活。
+        return NeedsWakeHint(snapshot) ? $"{text}，按键唤醒后刷新" : text;
+    }
+
+    private static bool NeedsWakeHint(DeviceBatterySnapshot snapshot) =>
+        snapshot.Transport == DeviceTransportKind.Hid24G &&
+        snapshot.Protocol == Hid24GProtocol.LingbaoK98 &&
+        snapshot.Status is BatteryReadStatus.Stale or BatteryReadStatus.Unavailable;
 
     private static string FormatRelative(DateTimeOffset timestamp)
     {

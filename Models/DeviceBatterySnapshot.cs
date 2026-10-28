@@ -30,4 +30,7 @@ public sealed record DeviceBatterySnapshot(
 
     /// <summary>HID 2.4G 接收器厂商名，例如 Rapoo。</summary>
     public string? VendorName { get; init; }
+
+    /// <summary>HID 2.4G 接收器使用的厂商协议；蓝牙设备为 <see cref="Hid24GProtocol.Unknown"/>。</summary>
+    public Hid24GProtocol Protocol { get; init; } = Hid24GProtocol.Unknown;
 }
