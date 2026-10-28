@@ -274,9 +274,10 @@
 
 ### 6.6 扫描失败
 
-- `ui:InfoBar`（Severity=Error）：`本轮扫描失败，将在 45 秒后重试。`
-- 提供“重试”操作；不自动打开对话框。
-- 连续失败 3 轮才显示；偶发失败仅记录日志，避免闪烁。
+- 触发：整轮扫描失败（蓝牙与 2.4G 枚举都失败，或轮次内出现未捕获异常）。服务通过 `StatusChanged` 发出 `DeviceServiceState.Error`，文案为“本轮扫描失败，将在下一轮自动重试”。
+- 在列表区域上方显示非阻塞 `ui:InfoBar`（Severity=Error，标题“扫描失败”）+“重试”按钮；不遮住列表，不弹对话框。
+- “重试”复用底栏“立即刷新”命令，刷新中禁用。
+- 下一轮状态恢复（Ready / 蓝牙关闭 / 无适配器）即自动收起，不累计连续失败轮次。
 
 ---
 
@@ -413,7 +414,8 @@ BlueMeter
 | `State.AllUnreachable.Body` | 请确认蓝牙开关与设备电源 |
 | `State.BluetoothOff` | 蓝牙已关闭。打开系统蓝牙后会自动恢复扫描。 |
 | `State.NoAdapter` | 未检测到蓝牙适配器。请确认设备具备蓝牙硬件。 |
-| `State.ScanFailed` | 本轮扫描失败，将在 {0} 秒后重试。 |
+| `State.ScanFailed.Title` | 扫描失败 |
+| `State.ScanFailed` | 本轮扫描失败，将在下一轮自动重试 |
 | `Action.Refresh` | 立即刷新 |
 | `Action.Refreshing` | 正在刷新… |
 | `Action.Settings` | 设置 |

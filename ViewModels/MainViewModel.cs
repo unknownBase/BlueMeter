@@ -42,6 +42,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _listHintText = string.Empty;
     private string _globalStatus = "正在启动设备刷新…";
     private StatusSeverity _statusSeverity = StatusSeverity.Normal;
+    private bool _isScanFailed;
+    private string _scanFailureMessage = string.Empty;
 
     public MainViewModel()
     {
@@ -116,6 +118,20 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         get => _statusSeverity;
         private set => SetProperty(ref _statusSeverity, value);
+    }
+
+    /// <summary>服务报告整轮扫描失败：显示非阻塞 InfoBar，下一轮成功后自动收起。</summary>
+    public bool IsScanFailed
+    {
+        get => _isScanFailed;
+        private set => SetProperty(ref _isScanFailed, value);
+    }
+
+    /// <summary>扫描失败文案，直接来自服务状态。</summary>
+    public string ScanFailureMessage
+    {
+        get => _scanFailureMessage;
+        private set => SetProperty(ref _scanFailureMessage, value);
     }
 
     public bool IsRefreshing
@@ -197,6 +213,31 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         GlobalStatus = message;
         StatusSeverity = severity;
+    }
+
+    /// <summary>
+    /// 应用服务状态：底栏文案与严重级别，并把整轮扫描失败（Error）映射成非阻塞提示。
+    /// 非 Error 状态会收起提示，因此下一轮成功后 InfoBar 自动消失。
+    /// </summary>
+    public void ApplyServiceStatus(DeviceServiceStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+
+        var severity = status.State is DeviceServiceState.NoAdapter
+            or DeviceServiceState.BluetoothOff
+            or DeviceServiceState.Error
+            || status.Message.Contains("不可用", StringComparison.Ordinal)
+            ? StatusSeverity.Caution
+            : StatusSeverity.Normal;
+
+        SetStatus(status.Message, severity);
+
+        if (status.State == DeviceServiceState.Error)
+        {
+            ScanFailureMessage = status.Message;
+        }
+
+        IsScanFailed = status.State == DeviceServiceState.Error;
     }
 
     public void OpenSettings() => IsSettingsOpen = true;

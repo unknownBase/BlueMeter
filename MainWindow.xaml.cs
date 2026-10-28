@@ -126,6 +126,10 @@ public partial class MainWindow : FluentWindow
     public void SetGlobalStatus(string message, bool isWarning = false) =>
         ViewModel.SetStatus(message, isWarning ? StatusSeverity.Caution : StatusSeverity.Normal);
 
+    /// <summary>服务状态统一走 ViewModel：底栏文案、状态点和扫描失败 InfoBar 同源。</summary>
+    public void SetServiceStatus(DeviceServiceStatus status) =>
+        ViewModel.ApplyServiceStatus(status);
+
     public void SetRefreshing(bool refreshing) => ViewModel.IsRefreshing = refreshing;
 
     protected override void OnClosing(CancelEventArgs e)

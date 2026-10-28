@@ -122,6 +122,50 @@ public sealed class MainViewModelTests
     }
 
     [Fact]
+    public void ServiceError_ShowsScanFailureInfoBar()
+    {
+        using var viewModel = new MainViewModel();
+
+        viewModel.ApplyServiceStatus(DeviceServiceStatus.Create(
+            DeviceServiceState.Error,
+            "本轮扫描失败，将在下一轮自动重试"));
+
+        Assert.True(viewModel.IsScanFailed);
+        Assert.Equal("本轮扫描失败，将在下一轮自动重试", viewModel.ScanFailureMessage);
+        Assert.Equal(StatusSeverity.Caution, viewModel.StatusSeverity);
+    }
+
+    [Fact]
+    public void NextSuccessfulStatus_ClearsScanFailure()
+    {
+        using var viewModel = new MainViewModel();
+        viewModel.ApplyServiceStatus(DeviceServiceStatus.Create(
+            DeviceServiceState.Error,
+            "本轮扫描失败，将在下一轮自动重试"));
+
+        viewModel.ApplyServiceStatus(DeviceServiceStatus.Create(
+            DeviceServiceState.Ready,
+            "蓝牙可用"));
+
+        Assert.False(viewModel.IsScanFailed);
+        Assert.Equal("蓝牙可用", viewModel.GlobalStatus);
+        Assert.Equal(StatusSeverity.Normal, viewModel.StatusSeverity);
+    }
+
+    [Fact]
+    public void BluetoothOff_IsCautionButNotScanFailure()
+    {
+        using var viewModel = new MainViewModel();
+
+        viewModel.ApplyServiceStatus(DeviceServiceStatus.Create(
+            DeviceServiceState.BluetoothOff,
+            "蓝牙未开启"));
+
+        Assert.False(viewModel.IsScanFailed);
+        Assert.Equal(StatusSeverity.Caution, viewModel.StatusSeverity);
+    }
+
+    [Fact]
     public void NoDevices_IsEmptyNotUnreachable()
     {
         using var viewModel = new MainViewModel();

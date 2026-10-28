@@ -11,6 +11,10 @@ public interface IDeviceBatteryService : IDisposable
 
     event EventHandler<IReadOnlyList<LowBatteryNotice>>? LowBatteryDetected;
 
+    /// <summary>
+    /// 全局状态。<see cref="DeviceServiceState.Error"/> 表示整轮扫描失败，
+    /// 界面据此显示非阻塞提示；下一轮状态恢复后同事件会自动转回 Ready。
+    /// </summary>
     event EventHandler<DeviceServiceStatus>? StatusChanged;
 
     IReadOnlyList<DeviceBatterySnapshot> Current { get; }

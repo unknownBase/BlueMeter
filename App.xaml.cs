@@ -223,12 +223,8 @@ public partial class App : Application
         object? sender,
         DeviceServiceStatus status)
     {
-        _mainWindow?.SetGlobalStatus(
-            status.Message,
-            status.State is DeviceServiceState.NoAdapter
-                or DeviceServiceState.BluetoothOff
-                or DeviceServiceState.Error
-            || status.Message.Contains("不可用", StringComparison.Ordinal));
+        // 严重级别与扫描失败 InfoBar 都由 ViewModel 根据服务状态统一决定。
+        _mainWindow?.SetServiceStatus(status);
 
         if (status.State is DeviceServiceState.NoAdapter
             or DeviceServiceState.BluetoothOff

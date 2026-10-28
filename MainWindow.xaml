@@ -177,16 +177,46 @@
             </StackPanel>
         </Grid>
 
-        <!-- 列表与状态页：互斥显示 -->
+        <!-- 扫描失败提示条 + 列表/状态页 -->
         <Grid Grid.Row="2" Margin="32,0,32,12">
-            <ScrollViewer Padding="0,0,0,12"
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- 整轮扫描失败：非阻塞提示，下一轮成功后自动收起 -->
+            <Grid Grid.Row="0"
+                  Margin="0,0,0,8"
+                  Visibility="{Binding IsScanFailed, Converter={StaticResource BoolToVisibility}}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <ui:InfoBar Grid.Column="0"
+                            Title="扫描失败"
+                            Message="{Binding ScanFailureMessage}"
+                            IsClosable="False"
+                            IsOpen="True"
+                            Severity="Error" />
+
+                <ui:Button Grid.Column="1"
+                           Margin="8,0,0,0"
+                           VerticalAlignment="Center"
+                           Command="{Binding RefreshCommand}"
+                           Content="重试" />
+            </Grid>
+
+            <ScrollViewer Grid.Row="1"
+                          Padding="0,0,0,12"
                           VerticalScrollBarVisibility="Auto"
                           Visibility="{Binding ShowDeviceList, Converter={StaticResource BoolToVisibility}}">
                 <ItemsControl ItemTemplate="{StaticResource DeviceCardTemplate}"
                               ItemsSource="{Binding Devices}" />
             </ScrollViewer>
 
-            <StackPanel HorizontalAlignment="Center"
+            <StackPanel Grid.Row="1"
+                        HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         Visibility="{Binding IsInitialLoading, Converter={StaticResource BoolToVisibility}}">
                 <ui:ProgressRing Width="24"
@@ -204,7 +234,8 @@
                            Text="通常只需要几秒钟" />
             </StackPanel>
 
-            <StackPanel MaxWidth="440"
+            <StackPanel Grid.Row="1"
+                        MaxWidth="440"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}">
@@ -228,7 +259,8 @@
                            Content="打开蓝牙设置" />
             </StackPanel>
 
-            <StackPanel MaxWidth="440"
+            <StackPanel Grid.Row="1"
+                        MaxWidth="440"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         Visibility="{Binding AreAllUnreachable, Converter={StaticResource BoolToVisibility}}">

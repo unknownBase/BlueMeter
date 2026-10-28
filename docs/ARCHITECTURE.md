@@ -107,7 +107,7 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 | `AppLog` | 文件日志、滚动、脱敏 | 业务判断 |
 | `ProbeHealthTracker` | 单台探针的连续失败与累计成功率；HID 失败日志降噪与轮次统计 | 业务读取逻辑 |
 
-> 当前 `0.4.3` 之后已实现 `DeviceBatteryService`、`BluetoothDeviceEnumerator`、`BatteryStateStore`、`CycleWaiter`、各探针与合并分派器；主窗口已接上 `MainViewModel` + `BatteryBar`（卡片列表、状态页、命令），`ClassicBatteryProbe` 与 M4 剩余项（不可达/扫描失败 InfoBar、列表行键盘焦点）仍在推进中。
+> 当前 `0.4.3` 之后已实现 `DeviceBatteryService`、`BluetoothDeviceEnumerator`、`BatteryStateStore`、`CycleWaiter`、各探针与合并分派器；主窗口已接上 `MainViewModel` + `BatteryBar`（卡片列表、状态页、扫描失败 InfoBar、命令），`ClassicBatteryProbe` 与 M4 剩余项（列表行键盘焦点）仍在推进中。
 
 ### 3.1 M4 主窗口分层
 
@@ -632,7 +632,7 @@ public interface IDeviceBatteryService
 
 - `DevicesUpdated`：每台设备读取完成后可发一次（增量），每轮结束再发一次完整快照；UI 侧做节流（100 ms 合并）。
 - `LowBatteryDetected`：每轮最多一次，批量携带本轮新触发的设备。
-- `StatusChanged`：蓝牙关闭、无适配器、枚举失败，或“蓝牙不可用但 2.4G 可用”等全局状态。
+- `StatusChanged`：蓝牙关闭、无适配器、整轮扫描失败（`Error` + 面向用户的文案），或“蓝牙不可用但 2.4G 可用”等全局状态；`MainViewModel` 把 `Error` 映射为非阻塞 InfoBar，不新增扫描失败专用事件。
 
 事件在后台线程触发。`MainViewModel` 捕获 UI `Dispatcher` 并 `BeginInvoke`，禁止在服务层直接操作控件。
 
@@ -866,7 +866,7 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 | 读取值非法 | 空缓冲区、>100、类型错误 | `Stale`/`Unavailable` | 旧值或 `--` | 记录 Warn，保留旧值 |
 | 设备枚举后消失 | `FromIdAsync` 返回 null、COM 异常 | 保留 1 轮后移除 | 列表移除 | 不视为错误 |
 | 应用退出时对象已释放 | `ObjectDisposedException` | — | — | Debug 日志后忽略 |
-| 单轮未捕获异常 | 循环边界 catch | 保持上轮 | 不崩溃 | Error 日志，等待下一轮 |
+| 单轮未捕获异常 | 轮次边界 catch | `Error` + `StatusChanged` | InfoBar + 重试 | Error 日志，下一轮自动重试 |
 | 气泡通知失败 | 异常/系统禁用 | — | 主窗口仍有状态 | Warn 日志，不重试 |
 | 设置文件损坏 | JSON 解析失败 | — | 使用默认值 | 备份坏文件为 `.bak`，记录 Warn |
 

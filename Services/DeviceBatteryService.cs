@@ -15,6 +15,9 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
     private static readonly TimeSpan PerDeviceTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan CycleBudget = TimeSpan.FromSeconds(30);
 
+    /// <summary>整轮失败时对外可见的文案；具体异常只进日志，不弹到界面。</summary>
+    private const string ScanFailedMessage = "本轮扫描失败，将在下一轮自动重试";
+
     private readonly SettingsService _settingsService;
     private readonly BleBatteryProbe _probe = new();
     private readonly BluetoothDeviceEnumerator _bluetooth = new();
@@ -269,7 +272,23 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         do
         {
             Interlocked.Exchange(ref _refreshQueued, 0);
-            await RunCycleCoreAsync(manual, cancellationToken).ConfigureAwait(false);
+
+            try
+            {
+                await RunCycleCoreAsync(manual, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                // 整轮异常属于服务级失败：用 Error 状态让界面显示非阻塞提示，
+                // 下一轮成功后 UpdateStatusAfterEnumeration 会自动恢复为 Ready。
+                SetStatus(DeviceServiceState.Error, ScanFailedMessage);
+                throw;
+            }
+
             manual = false;
         }
         while (Volatile.Read(ref _refreshQueued) != 0 &&
@@ -837,7 +856,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             }
             else
             {
-                SetStatus(DeviceServiceState.Error, "设备枚举失败，请查看日志");
+                SetStatus(DeviceServiceState.Error, ScanFailedMessage);
             }
 
             return;
