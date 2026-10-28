@@ -21,6 +21,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
     private readonly Hid24GDeviceEnumerator _hid24GEnumerator = new();
     private readonly Hid24GProbe _hid24GProbe = new();
     private readonly BatteryStateStore _store;
+    private readonly CycleWaiter _waiter;
     private readonly SemaphoreSlim _cycleGate = new(1, 1);
 
     private CancellationTokenSource? _loopCts;
@@ -30,6 +31,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         "尚未启动");
     private int _cycleCount;
     private int _refreshQueued;
+    private int _appliedIntervalSeconds;
     private int _started;
     private int _disposed;
 
@@ -37,6 +39,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
         _store = new BatteryStateStore(() => _settingsService.Current.LowBatteryThreshold);
+        _waiter = new CycleWaiter(GetNextDelay);
     }
 
     public event EventHandler<IReadOnlyList<DeviceBatterySnapshot>>? DevicesUpdated;
@@ -69,6 +72,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
 
         _settingsService.SettingsChanged += OnSettingsChanged;
         _probe.BatteryUpdated += OnBatteryUpdated;
+        Interlocked.Exchange(ref _appliedIntervalSeconds, CurrentIntervalSeconds());
         SetStatus(DeviceServiceState.Starting, "正在启动设备刷新");
         AppLog.Info("设备电量服务启动", "Service");
 
@@ -237,11 +241,9 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
                     AppLog.Error("刷新轮次失败", ex, "Cycle");
                 }
 
-                var delay = GetNextDelay();
                 try
                 {
-                    using var timer = new PeriodicTimer(delay);
-                    await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false);
+                    await _waiter.WaitAsync(cancellationToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -927,6 +929,20 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
             $"通知订阅 {settings.UseGattNotifications}",
             "Settings");
 
+        // 间隔变了就打断当前等待：新间隔立即生效，不用等满旧间隔；
+        // 正在刷新时没有等待可打断，新间隔从下一次等待开始生效。
+        var interval = ClampInterval(settings.RefreshIntervalSeconds);
+        if (Interlocked.Exchange(ref _appliedIntervalSeconds, interval) != interval)
+        {
+            var wasWaiting = _waiter.IsWaiting;
+            _waiter.Interrupt();
+            AppLog.Info(
+                wasWaiting
+                    ? $"刷新间隔已改为 {interval}s，当前等待已重置"
+                    : $"刷新间隔已改为 {interval}s，下一轮生效",
+                "Cycle");
+        }
+
         if (settings.UseGattNotifications)
         {
             return;
@@ -947,10 +963,7 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
 
     private TimeSpan GetNextDelay()
     {
-        var interval = Math.Clamp(
-            _settingsService.Current.RefreshIntervalSeconds,
-            AppSettings.MinRefreshIntervalSeconds,
-            AppSettings.MaxRefreshIntervalSeconds);
+        var interval = CurrentIntervalSeconds();
 
         // 抖动按间隔的 10% 取，并限制在 1–60 秒：10 秒轮询不会被 ±5 秒的固定抖动拖成 15 秒，
         // 小时级间隔也不会因为抖动太小而和其他实例同步。
@@ -958,6 +971,15 @@ public sealed class DeviceBatteryService : IDeviceBatteryService
         var jitter = Random.Shared.Next(-jitterRange, jitterRange + 1);
         return TimeSpan.FromSeconds(Math.Max(5, interval + jitter));
     }
+
+    private int CurrentIntervalSeconds() =>
+        ClampInterval(_settingsService.Current.RefreshIntervalSeconds);
+
+    private static int ClampInterval(int seconds) =>
+        Math.Clamp(
+            seconds,
+            AppSettings.MinRefreshIntervalSeconds,
+            AppSettings.MaxRefreshIntervalSeconds);
 
     private static void RaiseSafely<T>(
         EventHandler<T>? handler,

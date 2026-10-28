@@ -130,7 +130,7 @@
                             <TextBlock Margin="0,2,0,0"
                                        FontSize="12"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                       Text="10 秒 – 24 小时，下一轮生效" />
+                                       Text="10 秒 – 24 小时，修改立即生效" />
                         </StackPanel>
                         <StackPanel Grid.Column="1"
                                     HorizontalAlignment="Right"

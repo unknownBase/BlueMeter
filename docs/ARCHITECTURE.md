@@ -93,6 +93,7 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 | `DeviceBatteryService` | 生命周期、刷新循环与轮次编排、事件发布、失败日志 | 枚举细节、状态字段维护、窗口/托盘 UI |
 | `BluetoothDeviceEnumerator` | BLE/经典蓝牙枚举、系统属性解析、按地址去重合并、适配器与无线电状态探测 | GATT 连接与读取、状态存储 |
 | `BatteryStateStore` | 设备条目与读数状态、增删去重、探针结果应用、低电量判定、快照生成 | 枚举与读取、事件发布、调度 |
+| `CycleWaiter` | 可中断的轮次等待：间隔改动时按新间隔重新计时，进程退出时传播取消 | 计算间隔、执行刷新 |
 | `BleBatteryProbe` | 单台 BLE 设备的 GATT 读取与通知订阅 | 全局调度 |
 | `ClassicBatteryProbe` | 单台经典设备的系统属性读取 | GATT |
 | `Rapoo24GDeviceEnumerator` | 枚举 Rapoo 2.4G `24AE:1861` 的 `MI_01/COL05` HID 接口、校验 caps | 读取电量 |
@@ -133,6 +134,7 @@ BlueMeter/
 │  ├─ DeviceBatteryService.cs
 │  ├─ BluetoothDeviceEnumerator.cs
 │  ├─ BatteryStateStore.cs
+│  ├─ CycleWaiter.cs
 │  ├─ BleBatteryProbe.cs
 │  ├─ HidInterop.cs
 │  ├─ Hid24GEnumerationResult.cs
@@ -561,38 +563,33 @@ if (props.TryGetValue("System.Devices.BatteryPlusChargingText", out var text))
 
 | 参数 | 默认值 | 范围 | 说明 |
 | --- | --- | --- | --- |
-| `RefreshIntervalSeconds` | 45 | 30–60 | 定时轮询间隔 |
+| `RefreshIntervalSeconds` | 45 秒 | 10 秒–24 小时 | 定时轮询间隔，改动立即生效 |
 | `PerDeviceTimeoutSeconds` | 8 | 3–15 | 单设备读取超时 |
 | `CycleBudgetSeconds` | 30 | 15–60 | 单轮总预算，超出则跳过剩余设备 |
 | `StaleAfterCycles` | 3 | 固定 | 超过 3 个周期未成功 → Stale |
-| `JitterSeconds` | ±5 | 固定 | 避免与其他蓝牙软件同时扫描 |
+| `JitterSeconds` | 间隔的 10% | 1–60 秒 | 避免与其他蓝牙软件同时扫描 |
 
 ### 9.2 循环
 
 ```csharp
-public async Task RunAsync(CancellationToken ct)
+while (true)
 {
-    await RefreshOnceAsync(manual: false, ct);   // 启动后先扫一轮
+    await RefreshOnceAsync(manual: false, ct);   // 启动后先扫一轮；单轮失败不能杀死循环
 
-    using var timer = new PeriodicTimer(TimeSpan.FromSeconds(interval + jitter));
-    while (await timer.WaitForNextTickAsync(ct))
+    try
     {
-        try
-        {
-            await RefreshOnceAsync(manual: false, ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            break;
-        }
-        catch (Exception ex)
-        {
-            // 单轮失败不能杀死循环
-            log.Error("刷新轮次失败", ex);
-        }
+        await _waiter.WaitAsync(ct);             // CycleWaiter：可被间隔改动打断
+    }
+    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    {
+        break;
     }
 }
 ```
+
+- 等待用可中断的 `CycleWaiter`：间隔改动时打断当前等待、按新间隔重新计时，既不必等满旧间隔，也不会因打断而立刻多跑一轮。
+- 正在刷新（没有等待可打断）时改间隔，新值从下一次等待开始生效。
+- 打断先于等待登记（仍在算间隔）时不会丢：`CycleWaiter` 记下意向，登记后立即按新间隔重新计时。
 
 - 枚举本身也加 10 秒超时。
 - `SemaphoreSlim(1,1)` 保证同一时刻只有一轮在跑。
