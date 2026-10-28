@@ -5,12 +5,14 @@
              xmlns:models="clr-namespace:BlueMeter.Models"
              x:Name="Root"
              Width="120"
-             Height="6"
+             Height="8"
              IsHitTestVisible="False"
              Focusable="False">
     <Grid>
-        <!-- 轨道始终占位，避免有无电量时行宽跳动。 -->
-        <Border CornerRadius="3" Background="{DynamicResource ControlFillColorSecondaryBrush}" />
+        <!-- 轨道用强填充色并降透明度，在 Mica / 卡片背景上都留得住形。 -->
+        <Border CornerRadius="4"
+                Background="{DynamicResource ControlStrongFillColorDefaultBrush}"
+                Opacity="0.55" />
 
         <Grid>
             <Grid.ColumnDefinitions>
@@ -18,10 +20,10 @@
                 <ColumnDefinition x:Name="RemainderColumn" Width="*" />
             </Grid.ColumnDefinitions>
 
-            <Border x:Name="Fill" Grid.Column="0" CornerRadius="3">
+            <Border x:Name="Fill" Grid.Column="0" CornerRadius="4">
                 <Border.Style>
                     <Style TargetType="Border">
-                        <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                        <Setter Property="Background" Value="{DynamicResource SystemFillColorSuccessBrush}" />
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding Level, ElementName=Root}" Value="{x:Static models:BatteryLevel.Caution}">
                                 <Setter Property="Background" Value="{DynamicResource SystemFillColorCautionBrush}" />

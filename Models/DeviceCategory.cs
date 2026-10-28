@@ -24,8 +24,21 @@ public static class DeviceCategoryClassifier
     private static readonly string[] GamepadKeywords = ["gamepad", "controller", "手柄", "xbox"];
     private static readonly string[] PhoneKeywords = ["phone", "手机", "iphone", "tablet", "平板"];
 
-    public static DeviceCategory Classify(string? name)
+    /// <summary>
+    /// 先按 2.4G 厂商协议推断，再退回名称关键词。
+    /// 2.4G 接收器的产品串只报厂商通用名（例如 “Rapoo Gaming Device”），
+    /// 名称里没有鼠标/键盘字样，只能靠协议区分。
+    /// </summary>
+    public static DeviceCategory Classify(string? name, Hid24GProtocol protocol = Hid24GProtocol.Unknown)
     {
+        switch (protocol)
+        {
+            case Hid24GProtocol.Rapoo:
+                return DeviceCategory.Mouse;
+            case Hid24GProtocol.LingbaoK98:
+                return DeviceCategory.Keyboard;
+        }
+
         if (string.IsNullOrWhiteSpace(name))
         {
             return DeviceCategory.Other;

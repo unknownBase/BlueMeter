@@ -33,7 +33,7 @@ public sealed class DeviceItemViewModel : ObservableObject
         _snapshot = snapshot;
         _lowBatteryThreshold = lowBatteryThreshold;
         Id = snapshot.Id;
-        Category = DeviceCategoryClassifier.Classify(snapshot.Name);
+        Category = DeviceCategoryClassifier.Classify(snapshot.Name, snapshot.Protocol);
         Apply();
     }
 

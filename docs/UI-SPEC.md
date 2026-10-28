@@ -147,7 +147,7 @@
 | 名称 | 设备名 | 14px Semibold；超长省略号；最大 1 行 |
 | 元信息 | 类型 + 更新时间 + 状态 | 12px Secondary；最多 1 行；用 `·` 分隔 |
 | 2.4G 元信息 | `2.4G 接收器 · {厂商} · 已连接 · 刚刚更新` | 厂商为 Rapoo 或 LINGBAO；不得写成 BLE/经典蓝牙 |
-| 电量条 | 120×6 圆角 | 仅在有电量时显示；无值隐藏并保留空间 |
+| 电量条 | 120×8 圆角 | 仅在有电量时显示；无值隐藏并保留空间 |
 | 百分比 | `15%` | 16px Semibold，右对齐，固定宽度 56，避免跳动 |
 
 ### 4.2 设备类型图标
@@ -200,20 +200,20 @@
 
 自绘 `BatteryBar`（`Controls/BatteryBar.xaml`）：
 
-- 尺寸：宽 120，高 6；圆角 3。
-- 轨道：`ControlFillColorSecondaryBrush`。
+- 尺寸：宽 120，高 8；圆角 4。
+- 轨道：`ControlStrongFillColorDefaultBrush`（透明度 0.55），保证在 Mica / 卡片背景上仍能看出槽形。
 - 填充：宽度 = `Value / 100 × 120`，`Value` 钳制 0–100。
 - 颜色阈值（`threshold` 取自设置，默认 20）：
-  - `value ≤ threshold`：`SystemFillColorCriticalBrush`
-  - `threshold < value < threshold + 20`：`SystemFillColorCautionBrush`
-  - `value ≥ threshold + 20`：`AccentFillColorDefaultBrush`（或 `SystemFillColorSuccessBrush`）
+  - `value ≤ threshold`：`SystemFillColorCriticalBrush`（红）
+  - `threshold < value < threshold + 20`：`SystemFillColorCautionBrush`（黄）
+  - `value ≥ threshold + 20`：`SystemFillColorSuccessBrush`（绿）
 - 阈值 20% 时即：≤20 危险、21–39 警告、≥40 正常。
 - 行高亮与“电量低”文案使用同一个 `threshold`，保证颜色与语义一致。
 - `Value` 变化时 150ms 缓动；系统关闭动画或高对比度时立即切换。
 - 无电量时不显示填充，仅保留轨道或整条隐藏（推荐隐藏，避免误读为 0%）。
 - 无障碍：`AutomationProperties.Name="电量 15%"`，`HelpText="电量低"`。
 
-> 不使用标准 `ProgressBar` 的原因：Fluent 默认高度、内边距与圆角不适合 6px 电池条；自绘更可控。
+> 不使用标准 `ProgressBar` 的原因：Fluent 默认高度、内边距与圆角不适合 8px 电池条；自绘更可控。
 
 ---
 
@@ -431,7 +431,7 @@ BlueMeter
 | 警告浅背景 | `SystemFillColorCautionBackgroundBrush` |
 
 - 明暗主题由 `SystemThemeWatcher` 切换；控件颜色自动跟随。
-- 电量条的“正常”优先使用强调色，避免整屏绿色；警告/危险使用系统语义色。
+- 电量条固定使用绿 / 黄 / 红三档（`SystemFillColorSuccessBrush` / `Caution` / `Critical`），不跟随强调色：强调色在深色 Mica 上对比不足，且颜色本身要能表达电量。
 - 高对比度模式下，自定义背景与描边可能被系统覆盖；确保文字与图标仍可见，低电量仍显示文字标签。
 - 不透明背景兜底：当 Mica 不可用时，使用 `ApplicationBackgroundBrush`，不假设桌面透出。
 
