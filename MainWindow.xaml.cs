@@ -5,6 +5,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using BlueMeter.Models;
 using BlueMeter.Services;
@@ -21,6 +22,7 @@ public partial class MainWindow : FluentWindow
     private IReadOnlyList<DeviceBatterySnapshot> _snapshots = Array.Empty<DeviceBatterySnapshot>();
     private AppSettings? _settings;
     private bool _suppressSettingEvents;
+    private bool _themeWatched = true;
     private int _updateScheduled;
 
     public MainWindow()
@@ -154,12 +156,33 @@ public partial class MainWindow : FluentWindow
             return;
         }
 
+        // 必须在窗口句柄仍有效时取消主题监听：OnClosed 时 WM_DESTROY 已执行，
+        // WPF-UI 会抛 “Could not get window handle”。
+        UnwatchSystemTheme();
         base.OnClosing(e);
     }
 
     protected override void OnClosed(EventArgs e)
     {
-        // 窗口句柄已销毁时 WPF-UI 可能抛 InvalidOperationException，不影响退出流程。
+        // 启动即托盘且从未显示过的窗口没有句柄，UnwatchSystemTheme 会直接跳过。
+        UnwatchSystemTheme();
+        base.OnClosed(e);
+    }
+
+    private void UnwatchSystemTheme()
+    {
+        if (!_themeWatched)
+        {
+            return;
+        }
+
+        _themeWatched = false;
+
+        if (new WindowInteropHelper(this).Handle == IntPtr.Zero)
+        {
+            return;
+        }
+
         try
         {
             SystemThemeWatcher.UnWatch(this);
@@ -172,8 +195,6 @@ public partial class MainWindow : FluentWindow
         {
             AppLog.Warn("取消系统主题监听失败", "Window", ex);
         }
-
-        base.OnClosed(e);
     }
 
     private void ApplySnapshots(IReadOnlyList<DeviceBatterySnapshot> snapshots)

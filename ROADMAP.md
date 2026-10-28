@@ -97,6 +97,8 @@
 6. 在 Win10 1809+ 与 Win11 上均不崩溃；Mica 不可用时自动退化。
 
 > 验收状态：Windows 11 实机已验证启动、托盘、关闭隐藏、单实例、启动最小化、设置损坏回退与日志写入；Win10 1809 兼容性待对应实机复核。
+>
+> 2026-10-28 复核：托盘退出的 `Could not get window handle` 来自 `SystemThemeWatcher.UnWatch` 在 `WM_DESTROY` 之后调用；已改为在 `OnClosing`（句柄仍有效）取消监听，`OnClosed` 只做幂等兜底，待实机托盘退出复测。
 
 ---
 
@@ -267,6 +269,8 @@
 5. 托盘菜单“立即刷新”不产生并发扫描。
 
 > 验收状态：2026-10-28 实机（蓝牙适配器 BARROT USB）已枚举到 1 台经典蓝牙设备（HUAWEI FreeBuds 7i）。实测 `System.Devices.BatteryLife` 为 null、`Aep.Bluetooth.Le.IsConnectable=False`、按地址打开 GATT 返回 `Unreachable`，现在正确显示“暂时不可达”而不是“不支持电量读取”（Windows 设置页的数值走系统内部通道，第三方应用不可读）。带电量属性的经典设备（多数鼠标/键盘）仍需补验第 1、4 条。
+>
+> 日志复核：`经典蓝牙属性：HUAWEI FreeBuds 7i → BatteryLife=null，BatteryPlusCharging=null，解析=无` 已稳定输出，确认该耳机不向第三方暴露电量属性。
 
 ---
 
