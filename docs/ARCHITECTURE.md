@@ -107,7 +107,7 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 | `AppLog` | 文件日志、滚动、脱敏 | 业务判断 |
 | `ProbeHealthTracker` | 单台探针的连续失败与累计成功率；HID 失败日志降噪与轮次统计 | 业务读取逻辑 |
 
-> 当前 `0.4.3` 之后已实现 `DeviceBatteryService`、`BluetoothDeviceEnumerator`、`BatteryStateStore`、`CycleWaiter`、各探针与合并分派器；主窗口已接上 `MainViewModel` + `BatteryBar`（卡片列表、状态页、扫描失败 InfoBar、命令），`ClassicBatteryProbe` 与 M4 剩余项（列表行键盘焦点）仍在推进中。
+> 当前 `0.4.3` 之后已实现 `DeviceBatteryService`、`BluetoothDeviceEnumerator`、`BatteryStateStore`、`CycleWaiter`、各探针与合并分派器；主窗口已接上 `MainViewModel` + `BatteryBar`（卡片列表、状态页、扫描失败 InfoBar、行键盘焦点与命令），M4 主体完成，剩余高对比度与 20 台并发实机复核。
 
 ### 3.1 M4 主窗口分层
 
@@ -116,6 +116,7 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 - `DeviceItemViewModel` 保存快照与阈值；`RefreshTimeText()` 只重算相对时间。窗口隐藏时暂停 30 秒相对时间计时器，重新显示时补一次。
 - `BatteryBar` 用两列星号宽度实现填充比例，`Level`（`BatteryLevel`）决定强调/警告/危险色；数值变化 150ms 缓动，系统关闭动画或高对比度时立即切换。
 - 设备类别（鼠标/键盘/耳机/手柄/手机）由名称关键词推断，仅供选图标，不作为业务判断。
+- 列表行不可选中但可聚焦：行 `Border` 设 `Focusable="True"` 并进入 Tab 链，`FocusVisualStyle` 自绘 2px 强调色描边；`MainWindow.OnDeviceRowKeyDown` 处理 ↑/↓/Home/End，按 `ItemsControl` 容器顺序移动焦点，Enter/Space 无操作。
 
 ---
 

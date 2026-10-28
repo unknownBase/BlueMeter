@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
 using BlueMeter.Models;
 using BlueMeter.Services;
 using BlueMeter.ViewModels;
@@ -446,6 +447,84 @@ public partial class MainWindow : FluentWindow
             ViewModel.ToggleSettings();
             e.Handled = true;
         }
+    }
+
+    /// <summary>
+    /// 列表行键盘导航：Tab 进入后可用上下方向键在行间移动，Home/End 跳到首尾。
+    /// 一期没有详情页，Enter/Space 不触发任何操作。
+    /// </summary>
+    private void OnDeviceRowKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is not (Key.Up or Key.Down or Key.Home or Key.End) ||
+            sender is not FrameworkElement row)
+        {
+            return;
+        }
+
+        var rows = GetDeviceRows();
+        var index = rows.IndexOf(row);
+        if (index < 0)
+        {
+            return;
+        }
+
+        var target = e.Key switch
+        {
+            Key.Up => index - 1,
+            Key.Down => index + 1,
+            Key.Home => 0,
+            _ => rows.Count - 1,
+        };
+
+        if (target >= 0 && target < rows.Count)
+        {
+            rows[target].Focus();
+            rows[target].BringIntoView();
+        }
+
+        e.Handled = true;
+    }
+
+    /// <summary>按显示顺序取出当前列表行的卡片 Border；容器尚未生成时跳过。</summary>
+    private List<FrameworkElement> GetDeviceRows()
+    {
+        var rows = new List<FrameworkElement>(DeviceList.Items.Count);
+        for (var i = 0; i < DeviceList.Items.Count; i++)
+        {
+            if (DeviceList.ItemContainerGenerator.ContainerFromIndex(i) is not DependencyObject container)
+            {
+                continue;
+            }
+
+            var card = FindFocusableCard(container);
+            if (card is not null)
+            {
+                rows.Add(card);
+            }
+        }
+
+        return rows;
+    }
+
+    private static Border? FindFocusableCard(DependencyObject root)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is Border { Focusable: true } card)
+            {
+                return card;
+            }
+
+            var nested = FindFocusableCard(child);
+            if (nested is not null)
+            {
+                return nested;
+            }
+        }
+
+        return null;
     }
 
     private void OnViewModelRefreshRequested(object? sender, EventArgs e) =>

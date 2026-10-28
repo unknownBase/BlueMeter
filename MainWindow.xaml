@@ -21,15 +21,33 @@
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
         <conv:DeviceCategoryToSymbolConverter x:Key="CategoryToSymbol" />
 
+        <!-- 列表行焦点视觉：2px 强调色描边，替代 WPF 默认虚线框 -->
+        <Style x:Key="DeviceRowFocusVisual" TargetType="Control">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Border BorderBrush="{DynamicResource AccentFillColorDefaultBrush}"
+                                BorderThickness="2"
+                                CornerRadius="8" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- 设备卡片：图标 / 名称与元信息 / 电量条 / 百分比 -->
         <DataTemplate x:Key="DeviceCardTemplate">
+            <!-- 行不可选中，但可 Tab 聚焦（键盘用户能逐行听取无障碍信息） -->
             <Border x:Name="Card"
                     Height="68"
                     Margin="0,0,0,4"
                     Padding="12,0"
                     AutomationProperties.Name="{Binding AutomationName}"
                     Background="Transparent"
-                    CornerRadius="8">
+                    CornerRadius="8"
+                    Focusable="True"
+                    FocusVisualStyle="{StaticResource DeviceRowFocusVisual}"
+                    KeyboardNavigation.IsTabStop="True"
+                    KeyDown="OnDeviceRowKeyDown">
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Background" Value="Transparent" />
@@ -211,7 +229,8 @@
                           Padding="0,0,0,12"
                           VerticalScrollBarVisibility="Auto"
                           Visibility="{Binding ShowDeviceList, Converter={StaticResource BoolToVisibility}}">
-                <ItemsControl ItemTemplate="{StaticResource DeviceCardTemplate}"
+                <ItemsControl x:Name="DeviceList"
+                              ItemTemplate="{StaticResource DeviceCardTemplate}"
                               ItemsSource="{Binding Devices}" />
             </ScrollViewer>
 
