@@ -5,7 +5,7 @@ namespace BlueMeter.Services;
 /// <summary>
 /// 托盘右键菜单“设备电量”条目的唯一来源：只列有读数的设备，
 /// 按电量升序取前 <see cref="MaxDevices"/> 台，并在文案里标出低电量与旧值。
-/// 菜单项只读展示，点击不执行动作，完整列表仍在主窗口。
+/// 条目点击后由 <see cref="TrayIconService"/> 打开主窗口，完整列表仍在主窗口。
 /// </summary>
 public static class TrayMenuBuilder
 {
@@ -26,11 +26,8 @@ public static class TrayMenuBuilder
     {
         ArgumentNullException.ThrowIfNull(snapshots);
 
-        return snapshots
-            .Where(snapshot => snapshot.BatteryPercent.HasValue)
-            .OrderBy(snapshot => snapshot.BatteryPercent!.Value)
-            .ThenBy(snapshot => snapshot.Name, StringComparer.CurrentCultureIgnoreCase)
-            .Take(MaxDevices)
+        return BatterySnapshotSelector
+            .ReadableLowestFirst(snapshots, MaxDevices)
             .Select(snapshot => Format(snapshot, lowBatteryThreshold))
             .ToList();
     }
@@ -40,7 +37,7 @@ public static class TrayMenuBuilder
         var percent = snapshot.BatteryPercent!.Value;
         var text = $"{ShortenName(snapshot.Name)} · {percent}%";
 
-        // 菜单项不可点击，因此低电量与旧值只能靠文字标注，不能只靠颜色。
+        // 按需求状态只能靠文字表达，不能只靠颜色，低电量与旧值都追加标注。
         if (percent <= lowBatteryThreshold)
         {
             text += " · 电量低";

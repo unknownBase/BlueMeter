@@ -9,7 +9,7 @@ namespace BlueMeter.Services;
 /// <summary>
 /// 托盘图标的唯一所有者。所有公开方法都应在 UI 线程调用。
 /// </summary>
-public sealed class TrayIconService : IDisposable
+public sealed class TrayIconService : ITraySurface, IDisposable
 {
     private const int MaxToolTipLength = 120;
 

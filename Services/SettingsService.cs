@@ -23,10 +23,18 @@ public sealed class SettingsService
     private readonly object _syncRoot = new();
 
     public SettingsService()
-    {
-        SettingsDirectory = Path.Combine(
+        : this(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "BlueMeter");
+            "BlueMeter"))
+    {
+    }
+
+    /// <summary>指定设置目录：实际文件为该目录下的 <c>settings.json</c>，便于测试或迁移。</summary>
+    public SettingsService(string settingsDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(settingsDirectory);
+
+        SettingsDirectory = settingsDirectory;
         SettingsPath = Path.Combine(SettingsDirectory, SettingsFileName);
         Current = Load();
     }

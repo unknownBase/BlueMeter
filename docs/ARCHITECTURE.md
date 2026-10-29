@@ -59,11 +59,11 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 ```text
 ┌──────────────────────────── UI 线程（STA） ────────────────────────────┐
 │                                                                        │
-│  App.xaml.cs（组合根）                                                 │
-│    ├─ 单实例 Mutex                                                     │
-│    ├─ SettingsService / AppLog                                         │
+│  App.xaml.cs（组合根：只做装配与生命周期）                              │
+│    ├─ SingleInstanceService（Mutex + 命名管道唤醒）                    │
+│    ├─ SettingsCoordinator ── SettingsService / StartupRegistration     │
 │    ├─ DeviceBatteryService ──────────────┐                          │
-│    ├─ TrayIconService ── TaskbarIcon        │                          │
+│    ├─ TrayPresenter ── TrayIconService ── TaskbarIcon                    │
 │    └─ MainWindow ── DeviceItemViewModel[]                            │
 │                         ▲                   │                          │
 │                         │ Dispatcher 编组   │ DevicesUpdated           │
@@ -86,8 +86,13 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 
 | 组件 | 职责 | 不负责 |
 | --- | --- | --- |
-| `App` | 组合根、单实例、全局异常、启动/退出编排 | 蓝牙细节、UI 布局 |
-| `TrayIconService` | 创建/释放 `TaskbarIcon`、菜单（含设备电量段）、左键还原、ToolTip、气泡 | 电量读取 |
+| `App` | 组合根、全局异常、启动/退出编排 | 蓝牙细节、UI 布局、设置保存细节、托盘文案 |
+| `SingleInstanceService` | 命名互斥体保唯一实例；第二个实例通过命名管道请求已有实例显示窗口 | 窗口显示方式、UI 线程 |
+| `SettingsCoordinator` | 设置保存、回显、失败回滚与开机启动注册表副作用 | UI 布局、具体控件绑定 |
+| `TrayPresenter` | 决定托盘显示什么：ToolTip 文案与“设备电量”段内容（含服务状态优先级） | 创建托盘图标、菜单项细节 |
+| `ITraySurface` | 托盘展示接口；生产实现是 `TrayIconService`，单测用假实现 | 业务判断 |
+| `TrayIconService` | 创建/释放 `TaskbarIcon`、菜单（含设备电量段）、左键还原、ToolTip、气泡 | 电量读取、文案决策 |
+| `BatterySnapshotSelector` | ToolTip 与菜单共用的设备选择规则：只取有读数、按电量升序、同电量按名称 | 文案拼接 |
 | `MainWindow` | Fluent 外壳、关闭隐藏、最小化策略 | 枚举设备 |
 | `MainViewModel` | 设备集合、排序、汇总、命令、设置绑定 | 直接调用 WinRT |
 | `SettingsViewModel` | 设置面板控件值同步、间隔数值/单位换算与校验、编辑事件 | 保存、注册表写入、窗口与布局 |
@@ -113,7 +118,7 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 
 ### 3.1 M4 主窗口分层
 
-- `MainWindow` 只做窗口事务：标题栏、关闭隐藏、设置控件绑定、主题监听与快捷键分发；设备列表、摘要与状态全部由 `MainViewModel` 提供。
+- `MainWindow` 只做窗口事务：标题栏、关闭隐藏、主题监听与快捷键分发；设备列表、摘要与状态全部由 `MainViewModel` 提供，设置面板的控件与事件在 `SettingsPanel` / `SettingsViewModel` 里。
 - `MainViewModel` 每轮接收完整快照：按 `Id` 复用已有行对象，必要时用 `Move` 调整位置，不重建集合，避免每轮刷新闪烁；排序分组见 UI-SPEC §4.3。
 - `DeviceItemViewModel` 保存快照与阈值；`RefreshTimeText()` 只重算相对时间。窗口隐藏时暂停 30 秒相对时间计时器，重新显示时补一次。
 - `BatteryBar` 用两列星号宽度实现填充比例，`Level`（`BatteryLevel`）决定强调/警告/危险色；数值变化 150ms 缓动，系统关闭动画或高对比度时立即切换。
@@ -158,6 +163,11 @@ BlueMeter/
 │  ├─ K98_24GDeviceEnumerator.cs
 │  ├─ K98_24GProbe.cs
 │  ├─ TrayIconService.cs
+│  ├─ ITraySurface.cs
+│  ├─ TrayPresenter.cs
+│  ├─ BatterySnapshotSelector.cs
+│  ├─ SingleInstanceService.cs
+│  ├─ SettingsCoordinator.cs
 │  ├─ TrayMenuBuilder.cs
 │  ├─ TraySummaryBuilder.cs
 │  ├─ SettingsService.cs
@@ -724,13 +734,16 @@ _taskbarIcon.ShowNotification(
 
 ```text
 App.OnStartup
- ├─ 获取单实例 Mutex；失败 → 第二实例直接退出（唤醒已有窗口可后补）
+ ├─ SingleInstanceService.TryAcquire()
+ │    └─ 已有实例 → 命名管道请求它显示窗口，本实例退出
  ├─ 加载设置、初始化日志
  ├─ 创建 DeviceBatteryService
- ├─ 创建 TrayIconService（TaskbarIcon，Visible）
+ ├─ 创建 TrayIconService（TaskbarIcon，Visible）+ TrayPresenter
+ ├─ 创建 SettingsCoordinator（保存/回滚/开机启动）
  ├─ 创建 MainWindow + MainViewModel，订阅服务事件
  ├─ 若 !StartMinimized → Show()
  ├─ 启动服务循环（后台）
+ ├─ 开始监听“显示主窗口”管道请求
  └─ 订阅 SessionEnding
 ```
 
@@ -794,9 +807,10 @@ Tray menu "退出"
 
 ### 12.4 单实例
 
-- 命名：`Local\BlueMeter.SingleInstance`（每用户会话）。
-- 第二个实例检测到互斥体已存在后立即退出；首版可以不实现“唤醒已有窗口”，但不得产生第二个托盘图标。
-- 若后续实现唤醒，优先命名管道（`System.IO.Pipes`），避免 `WM_COPYDATA` 的窗口句柄时序问题。
+- 命名：`Local\BlueMeter.SingleInstance`（每用户会话）；由 `SingleInstanceService` 封装。
+- 第二个实例检测到互斥体已存在后不创建托盘图标，而是连接命名管道 `BlueMeter.Activate.{SessionId}` 发送一次激活请求，请已有实例显示并激活主窗口。
+- 管道 500 毫秒内连不上（已有实例正在启动或退出）时退回静默退出，不弹错、不重试风暴。
+- 监听在线程池上循环，回调由 `App` 编组到 UI 线程后再调 `ShowAndActivate()`；监听失败的记录日志后短暂退避重试。
 
 ### 12.5 Explorer 重启
 
@@ -832,6 +846,7 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 - 最终再做一次 120 字符硬截断（保留结尾 `…`）。
 - 单行文本；不拼接换行，避免不同 Windows 版本提示框高度异常。
 - 每次 `DevicesUpdated` 后重建；相同文本不重复赋值，减少 Shell 调用。
+- 设备选择与右键菜单共用 `BatterySnapshotSelector`：只取有读数的设备，按电量升序、同电量按名称排序，两个入口不会给出不同的“最低电量”。
 
 ### 13.1 托盘右键菜单“设备电量”段
 
@@ -926,7 +941,7 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 - 加载失败 → 重命名为 `settings.json.bak-{timestamp}`，使用默认值。
 - 保存使用临时文件 + `File.Replace`/`File.Move(overwrite)`，避免半写。
 - 设置变更事件 → 服务更新间隔/阈值，无需重启；托盘与 UI 立即刷新。
-- 编辑链路：`SettingsPanel` → `SettingsViewModel.EditRequested` → `MainWindow.SettingsEditRequested` → `App` 调 `SettingsService.Update` 保存并回写；保存/注册表失败时回滚到旧值并弹托盘提示。
+- 编辑链路：`SettingsPanel` → `SettingsViewModel.EditRequested` → `MainWindow.SettingsEditRequested` → `SettingsCoordinator.TryUpdate` → `SettingsService.Update` 保存并回写；保存/注册表失败时由协调器回滚到旧值并弹托盘提示。
 - 未知字段忽略；缺失字段用默认值；数值越界钳制。
 - 不把设置写入注册表（开机启动键除外）。
 

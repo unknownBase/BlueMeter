@@ -26,10 +26,11 @@ BlueMeter 是一个常驻 Windows 系统托盘的轻量桌面应用，用来汇�
 | 低电量通知与托盘摘要 | ✅ 已完成（`0.4.0`） |
 | 设置接线：开机启动 / 列表过滤 / 刷新间隔与阈值 | ✅ 已完成（`0.4.2`，面板形态） |
 | 稳定性收口：托盘退出异常、K98 重试与唤醒提示、间隔即时生效 | ✅ 已完成（`0.4.3`） |
+| 托盘交互、设置面板重构与单实例唤醒 | ✅ 已完成（`0.5.0`） |
 | Fluent 主窗口与卡片列表、电量条、状态页 | 🚧 代码完成（M4；待实机复核键盘焦点与高对比度） |
 | 稳定性加固 | ⏳ 待实施（M5） |
 
-> 当前版本为 `0.4.3`：M1 的托盘与窗口生命周期保持可用；M2 接入已配对 BLE/经典设备枚举、地址去重、BLE GATT 电量读取、通知订阅、刷新调度与状态事件；`0.3.1` 增加 Rapoo 与 LINGBAO K98 2.4G 接收器的只读 HID 电量读取。`0.4.0` 补齐经典蓝牙电量（系统 AEP 属性）、低电量聚合托盘气泡与统一托盘摘要；`0.4.1` 让经典蓝牙在连接后每轮重读属性，并对可连接的设备追加 BLE GATT 兜底；`0.4.2` 把开机启动、列表过滤、刷新间隔与低电量阈值真正接线，并给出可用的设置面板；`0.4.3` 做稳定性收口（K98 探针内重试与失败降噪、“按键唤醒后刷新”提示、刷新间隔即时生效、托盘退出不再出现窗口句柄异常）并按职责拆分设备电量服务。当前 `[Unreleased]` 已接上 M4 主窗口：`MainViewModel` + 卡片式列表 + 电量条 + 加载/空/全部不可达/扫描失败状态、快捷键与列表行键盘焦点（Tab / 方向键 / Home / End）；托盘右键菜单新增“设备电量”段，最多列出 3 台设备（可在设置面板关闭），待实机复核高对比度与 20 台并发。
+> 当前版本为 `0.5.0`：M1 的托盘与窗口生命周期保持可用；M2 接入已配对 BLE/经典设备枚举、地址去重、BLE GATT 电量读取、通知订阅、刷新调度与状态事件；`0.3.1` 增加 Rapoo 与 LINGBAO K98 2.4G 接收器的只读 HID 电量读取。`0.4.0` 补齐经典蓝牙电量（系统 AEP 属性）、低电量聚合托盘气泡与统一托盘摘要；`0.4.1` 让经典蓝牙在连接后每轮重读属性，并对可连接的设备追加 BLE GATT 兜底；`0.4.2` 把开机启动、列表过滤、刷新间隔与低电量阈值真正接线；`0.4.3` 做稳定性收口并按职责拆分设备电量服务；`0.5.0` 完成 M4 主窗口（卡片列表、电量条、状态页、快捷键与行键盘焦点）、托盘“设备电量”段（最多 3 台、可在设置关闭、条目与气泡点击回到主窗口、刷新中显示状态）、设置面板的 `SettingsPanel` + `SettingsViewModel` 拆分，以及单实例唤醒（再次启动直接显示已有窗口）。高对比度、200% DPI 与 20 台并发仍需实机复核。
 
 当前基线：
 
@@ -55,7 +56,7 @@ BlueMeter 是一个常驻 Windows 系统托盘的轻量桌面应用，用来汇�
 - **Fluent UI**：`ui:FluentWindow` + Mica/Acrylic、圆角、系统标题栏、Snap Layout；列表展示名称、类型、电量、电量条、更新时间与状态。
 - **主题跟随**：`SystemThemeWatcher` 实时同步系统明暗主题、强调色与背景材质。
 - **启动即托盘**：可配置启动后只显示托盘图标，主窗口按需弹出。
-- **单实例**：重复启动时第二个实例直接退出，不产生第二个托盘图标；唤醒已有窗口可后补。
+- **单实例**：重复启动时第二个实例通过命名管道请已有实例显示主窗口，不产生第二个托盘图标。
 - **本地设置**：刷新间隔、低电量阈值、通知开关、启动行为等，保存在本地 JSON。
 
 ### 明确不做（一期）
@@ -184,7 +185,7 @@ dotnet publish .\BlueMeter.csproj -c Release -r win-x64 --self-contained true
 
 ## 项目结构
 
-当前仓库（`0.4.3`）：
+当前仓库（`0.5.0`）：
 
 ```text
 BlueMeter/
@@ -211,8 +212,12 @@ BlueMeter/
 ├─ Services/
 │  ├─ AppLog.cs                        # 按天日志、7 天保留、地址脱敏
 │  ├─ SettingsService.cs               # JSON 原子读写、损坏回退
+│  ├─ SettingsCoordinator.cs           # 保存、回显、失败回滚与开机启动副作用
 │  ├─ StartupRegistrationService.cs    # HKCU Run 键开机启动项读写与对齐
+│  ├─ SingleInstanceService.cs         # 互斥体 + 命名管道唤醒已有窗口
 │  ├─ TrayIconService.cs               # TaskbarIcon、菜单、ToolTip、退出
+│  ├─ TrayPresenter.cs                 # 托盘 ToolTip 与“设备电量”段的展示决策
+│  ├─ ITraySurface.cs                  # 托盘展示接口（单测用假实现）
 │  ├─ IDeviceBatteryService.cs
 │  ├─ DeviceBatteryService.cs          # 生命周期、轮次编排、事件
 │  ├─ BluetoothDeviceEnumerator.cs    # 蓝牙枚举、属性解析、适配器状态
@@ -221,6 +226,8 @@ BlueMeter/
 │  ├─ BleBatteryProbe.cs               # GATT 读取、CCCD 订阅、断连释放
 │  ├─ LowBatteryNotifier.cs            # 低电量聚合与托盘气泡
 │  ├─ TraySummaryBuilder.cs            # 托盘摘要文案
+│  ├─ TrayMenuBuilder.cs               # 右键菜单“设备电量”条目文案
+│  ├─ BatterySnapshotSelector.cs       # ToolTip 与菜单共用的设备排序规则
 │  ├─ HidInterop.cs                    # HID P/Invoke（Rapoo 只读；K98 固定只读查询）
 │  ├─ Hid24GEnumerationResult.cs       # 合并枚举结果
 │  ├─ Hid24GDeviceEnumerator.cs        # Rapoo/K98 枚举分发
@@ -233,13 +240,15 @@ BlueMeter/
 │  ├─ ObservableObject.cs              # INotifyPropertyChanged 基类
 │  ├─ RelayCommand.cs                  # 命令
 │  ├─ MainViewModel.cs                 # 行集合、排序、摘要、状态、命令
+│  ├─ SettingsViewModel.cs             # 设置面板值同步、单位换算与编辑事件
 │  ├─ DeviceItemViewModel.cs           # 可原地更新的列表行模型
 │  └─ DeviceListProjector.cs           # 列表排序与“隐藏不支持设备”投影
 ├─ Controls/
-│  └─ BatteryBar.xaml / .cs            # 圆角轨道 + 百分比填充的电量条
+│  ├─ BatteryBar.xaml / .cs            # 圆角轨道 + 百分比填充的电量条
+│  └─ SettingsPanel.xaml / .cs         # 设置面板用户控件
 ├─ Converters/
 │  └─ DeviceCategoryToSymbolConverter.cs
-├─ BlueMeter.Tests/                    # xUnit 单元测试（属性解码 / 托盘摘要 / 低电量文案 / 列表投影 / 开机启动命令 / 行模型）
+├─ BlueMeter.Tests/                    # xUnit 单元测试（属性解码 / 托盘摘要与菜单 / 展示决策 / 设置协调 / 单实例 / 列表投影 / 行模型）
 ├─ README.md
 ├─ ROADMAP.md
 ├─ CONTRIBUTING.md

@@ -82,7 +82,7 @@
   - `StartMinimized` 为 true 时不显示主窗口，只创建隐藏实例
 - [x] **M1-7 单实例**
   - 命名 `Mutex`（`Local\BlueMeter.SingleInstance`）
-  - 第二实例退出；通过 `WM_COPYDATA` 或命名管道唤醒已有窗口（可先只退出）
+  - 第二实例不产生第二个托盘图标（`0.5.0` 起还通过命名管道请已有实例显示主窗口）
 - [x] **M1-8 设置与日志骨架**
   - `%LOCALAPPDATA%\BlueMeter\settings.json` 读写、原子替换、损坏回退默认值
   - 日志：`%LOCALAPPDATA%\BlueMeter\logs\bluemeter-YYYYMMDD.log`，按天滚动、保留 7 天
@@ -375,6 +375,13 @@
 - [ ] **M5-6 手测矩阵**
   - 执行 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#6-手测矩阵) 全部用例
   - 记录结果与已知问题
+- [x] **M5-7 组合根与摘要规则收敛（提前完成）**
+  - `SettingsCoordinator` 承接设置保存/回显/回滚与开机启动副作用
+  - `TrayPresenter` + `ITraySurface` 承接托盘展示决策，`BatterySnapshotSelector` 统一 ToolTip 与菜单的设备排序
+  - `App.xaml.cs` 只保留装配与生命周期（约 422 → 325 行）
+- [x] **M5-8 单实例唤醒（提前完成）**
+  - `SingleInstanceService`：命名互斥体 + 按会话隔离的命名管道
+  - 第二个实例请求已有实例显示主窗口；管道 500 毫秒内连不上时退回静默退出
 
 ### 验收
 
@@ -433,7 +440,7 @@
 | 多设备同名/地址去重误判 | 中 | 低 | 优先地址去重；无地址时保留双条目并标注类型 |
 | 托盘 ToolTip 超长被截断 | 中 | 低 | 统一构建器，≤120 字符，超长截断设备名 |
 | Win10 上 Mica 不可用 | 高 | 低 | WPF-UI 自动退化；UI 不依赖透明背景 |
-| 单实例唤醒实现复杂 | 低 | 低 | 首版允许第二实例直接退出，唤醒可后补 |
+| 单实例唤醒实现复杂 | 低 | 低 | 已用命名管道实现（`0.5.0`）；连接超时退回静默退出，不影响托盘唯一性 |
 
 ---
 

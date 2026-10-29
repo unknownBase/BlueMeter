@@ -4,8 +4,11 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-29
+
 ### Added
 
+- 单实例唤醒：第二个实例不再静默退出，而是通过命名管道（按用户会话隔离）请已有实例显示并激活主窗口；互斥体仍保持每会话一个托盘图标。
 - M4 主窗口：新增 `MainViewModel`（设备行集合、排序投影、头部摘要、底栏状态、刷新/设置/隐藏/打开日志/打开蓝牙设置命令）与 `ObservableObject`、`RelayCommand` 基类；设备列表改为卡片式，含类型图标、名称、传输与状态元信息、电量条与百分比。
 - 新增 `BatteryBar` 电量条：圆角轨道 + 按百分比伸缩的填充，阈值决定强调/警告/危险色，数值变化 150ms 缓动且尊重“减少动画”与高对比度。
 - 新增页面状态：首轮扫描进度环、空状态（含“打开蓝牙设置”）、全部不可达状态（提示检查蓝牙开关与设备电源，并提供“立即刷新”）、扫描失败 InfoBar（非阻塞提示 + “重试”，下一轮恢复后自动收起）、窗口隐藏时暂停的 30 秒相对时间刷新；快捷键 `F5` 刷新、`Ctrl+,` 切换设置、`Esc` 先收设置再隐藏。
@@ -17,7 +20,9 @@
 
 ### Changed
 
-- 设置面板逻辑从 `MainWindow` 拆出：`BindSettings`、各开关 `Toggled` / 下拉 `SelectionChanged` 处理与下拉条目记录类全部移除，改由 `SettingsViewModel` 负责值同步、单位换算与编辑事件，`SettingsPanel` 只承载视图；保存、回滚与开机启动注册表副作用仍在 `App`，行为不变。
+- 托盘展示收敛：ToolTip 与右键菜单“设备电量”段改由 `TrayPresenter` 决定显示什么，`TrayIconService` 只负责画出来；两者的“最低电量设备”选择规则统一到 `BatterySnapshotSelector`，不再各算一套。
+- 组合根减负：设置保存、回显、回滚与开机启动注册表副作用移到 `SettingsCoordinator`，单实例逻辑移到 `SingleInstanceService`，`App.xaml.cs` 只负责装配与生命周期（约 422 → 325 行）。
+- 设置面板逻辑从 `MainWindow` 拆出：`BindSettings`、各开关 `Toggled` / 下拉 `SelectionChanged` 处理与下拉条目记录类全部移除，改由 `SettingsViewModel` 负责值同步、单位换算与编辑事件，`SettingsPanel` 只承载视图；保存与回滚链路不变。
 - 整轮扫描失败（蓝牙与 2.4G 枚举都失败，或轮次内出现未捕获异常）改用 `StatusChanged(DeviceServiceState.Error)` 携带面向用户的文案，不新增扫描失败专用事件；每轮枚举结果会重新发布状态，失败提示随下一轮恢复自动收起。
 - 设备行模型升级为可原地更新的正式行：同一设备复用同一对象，刷新只改属性并重排位置，避免列表闪烁。
 - 列表排序改为低电量 → 警告区 → 正常 → 暂时不可达 → 其余，同组内按电量升序、再按名称。
@@ -35,7 +40,9 @@
 ### Notes
 
 - 托盘“设备电量”段每轮扫描结束后重建；条目文案未变化时不重建，避免菜单抖动。条目可点击，与托盘气泡一同作为“打开主窗口”的入口；刷新期间标题追加“· 正在刷新…”，条目保留上一轮读数，完整列表仍在主窗口。
-- `DeviceListProjectorTests` 的排序断言按新分组规则更新；新增 `DeviceCategoryClassifierTests` 覆盖协议与名称两条判定路径；新增 `MainViewModelTests` 覆盖“全部不可达”状态判断、刷新中不闪烁与扫描失败状态映射（12 个用例）；新增 `K98RetrySchedule` 冷启动计划与“首轮失败不提示唤醒”的用例；新增 `TrayMenuBuilderTests` 覆盖空读数、低电量/旧值标注、最多 3 台、超长设备名截断与刷新标题（7 个用例）；新增 `SettingsViewModelTests` 覆盖绑定不回发、非 5 倍数阈值、间隔单位换算、上限钳制、非法输入回显与未变更不保存（8 个用例）；`dotnet test` 共 106 个用例全部通过。
+- `DeviceListProjectorTests` 的排序断言按新分组规则更新；新增 `DeviceCategoryClassifierTests` 覆盖协议与名称两条判定路径；新增 `MainViewModelTests` 覆盖“全部不可达”状态判断、刷新中不闪烁与扫描失败状态映射（12 个用例）；新增 `K98RetrySchedule` 冷启动计划与“首轮失败不提示唤醒”的用例；新增 `TrayMenuBuilderTests` 覆盖空读数、低电量/旧值标注、最多 3 台、超长设备名截断与刷新标题（7 个用例）；新增 `SettingsViewModelTests` 覆盖绑定不回发、非 5 倍数阈值、间隔单位换算、上限钳制、非法输入回显与未变更不保存（8 个用例）；新增 `TrayPresenterTests` 覆盖 ToolTip 优先级与菜单开关（8 个）、`SettingsCoordinatorTests` 覆盖保存/回滚/开机启动失败（4 个）、`BatterySnapshotSelectorTests` 覆盖排序与截断（4 个）、`SingleInstanceServiceTests` 覆盖互斥与管道唤醒（3 个）；`dotnet test` 共 125 个用例全部通过。
+- 单实例管道名按会话隔离（`BlueMeter.Activate.{SessionId}`），互斥体仍为 `Local\BlueMeter.SingleInstance`；第二个实例在 500 毫秒内连不上管道时退回静默退出，不会弹错。
+- 版本提升至 0.5.0。
 
 ## [0.4.3] - 2026-10-28
 

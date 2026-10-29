@@ -22,19 +22,14 @@ public static class TraySummaryBuilder
             return "BlueMeter · 未发现蓝牙或 2.4G 设备";
         }
 
-        var withBattery = snapshots
-            .Where(snapshot => snapshot.BatteryPercent.HasValue)
-            .ToList();
+        var withBattery = BatterySnapshotSelector.ReadableLowestFirst(snapshots);
 
         if (withBattery.Count == 0)
         {
             return Truncate($"BlueMeter · 已发现 {snapshots.Count} 台设备，暂无可读电量");
         }
 
-        var lowest = withBattery
-            .OrderBy(snapshot => snapshot.BatteryPercent!.Value)
-            .ThenBy(snapshot => snapshot.Name, StringComparer.CurrentCultureIgnoreCase)
-            .First();
+        var lowest = withBattery[0];
 
         if (withBattery.Count == 1)
         {
