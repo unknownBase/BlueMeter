@@ -211,6 +211,7 @@ public partial class MainWindow : FluentWindow
             SelectUnit(interval.Unit);
             SelectNumber(LowThresholdBox, settings.LowBatteryThreshold, " %");
             NotificationsSwitch.IsChecked = settings.LowBatteryNotificationsEnabled;
+            TrayBatteryMenuSwitch.IsChecked = settings.ShowBatteryInTrayMenu;
             GattSwitch.IsChecked = settings.UseGattNotifications;
             ShowUnsupportedSwitch.IsChecked = settings.ShowUnsupportedDevices;
             RunAtStartupSwitch.IsChecked = settings.RunAtStartup;
@@ -370,6 +371,17 @@ public partial class MainWindow : FluentWindow
 
         var enabled = NotificationsSwitch.IsChecked == true;
         RaiseSettingsEdit(settings => settings.LowBatteryNotificationsEnabled = enabled);
+    }
+
+    private void OnTrayBatteryMenuToggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressSettingEvents || _settings is null)
+        {
+            return;
+        }
+
+        var enabled = TrayBatteryMenuSwitch.IsChecked == true;
+        RaiseSettingsEdit(settings => settings.ShowBatteryInTrayMenu = enabled);
     }
 
     private void OnGattToggled(object sender, RoutedEventArgs e)

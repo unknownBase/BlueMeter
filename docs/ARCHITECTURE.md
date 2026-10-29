@@ -87,7 +87,7 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 | 组件 | 职责 | 不负责 |
 | --- | --- | --- |
 | `App` | 组合根、单实例、全局异常、启动/退出编排 | 蓝牙细节、UI 布局 |
-| `TrayIconService` | 创建/释放 `TaskbarIcon`、菜单、左键还原、ToolTip、气泡 | 电量读取 |
+| `TrayIconService` | 创建/释放 `TaskbarIcon`、菜单（含设备电量段）、左键还原、ToolTip、气泡 | 电量读取 |
 | `MainWindow` | Fluent 外壳、关闭隐藏、最小化策略 | 枚举设备 |
 | `MainViewModel` | 设备集合、排序、汇总、命令、设置绑定 | 直接调用 WinRT |
 | `DeviceBatteryService` | 生命周期、刷新循环与轮次编排、事件发布、失败日志 | 枚举细节、状态字段维护、窗口/托盘 UI |
@@ -156,6 +156,8 @@ BlueMeter/
 │  ├─ K98_24GDeviceEnumerator.cs
 │  ├─ K98_24GProbe.cs
 │  ├─ TrayIconService.cs
+│  ├─ TrayMenuBuilder.cs
+│  ├─ TraySummaryBuilder.cs
 │  ├─ SettingsService.cs
 │  └─ AppLog.cs
 ├─ ViewModels/                   namespace BlueMeter.ViewModels
@@ -826,6 +828,15 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 - 最终再做一次 120 字符硬截断（保留结尾 `…`）。
 - 单行文本；不拼接换行，避免不同 Windows 版本提示框高度异常。
 - 每次 `DevicesUpdated` 后重建；相同文本不重复赋值，减少 Shell 调用。
+
+### 13.1 托盘右键菜单“设备电量”段
+
+菜单固定项为“显示主窗口 / 立即刷新 / 退出”，中间可插入只读的“设备电量”分组：
+
+- `TrayMenuBuilder` 是唯一来源：只取有读数的设备，按电量升序取前 3 台；文案为 `{设备名} · {电量}%`，低电量追加 `· 电量低`、`Stale`/`Unavailable` 追加 `· 旧值`，设备名超过 18 字符截断。
+- `App` 在 `DevicesUpdated` 与设置变更后调用 `UpdateTrayBatteryMenu()`，把设置 `ShowBatteryInTrayMenu` 与条目一起交给 `TrayIconService.SetDeviceBatteryMenu`。
+- 条目与分组标题均为 `IsEnabled=false` 的只读菜单项，点击不执行动作；关闭设置或没有可读电量时，分组标题与分隔线一并移除。
+- 条目文案未变化时不重建菜单项；菜单结构只在 UI 线程变更，后台线程由 `TaskbarIcon.Dispatcher` 编组。
 
 ---
 

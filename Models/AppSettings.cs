@@ -28,6 +28,9 @@ public sealed class AppSettings
 
     public bool ShowUnsupportedDevices { get; set; } = true;
 
+    /// <summary>托盘右键菜单是否列出设备电量（最多 3 台）。</summary>
+    public bool ShowBatteryInTrayMenu { get; set; } = true;
+
     /// <summary>
     /// 修正旧版本、手工编辑或损坏文件中的越界值。未知字段在反序列化时已被忽略。
     /// </summary>

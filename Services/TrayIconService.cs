@@ -14,7 +14,10 @@ public sealed class TrayIconService : IDisposable
     private const int MaxToolTipLength = 120;
 
     private readonly TaskbarIcon _taskbarIcon;
+    private readonly List<UIElement> _batterySection = new();
+    private ContextMenu? _contextMenu;
     private MenuItem? _refreshItem;
+    private List<string> _batteryHeaders = new();
     private bool _disposed;
 
     public TrayIconService()
@@ -30,7 +33,8 @@ public sealed class TrayIconService : IDisposable
 
         _taskbarIcon.TrayLeftMouseDown += OnTrayLeftMouseDown;
         _taskbarIcon.TrayMouseDoubleClick += OnTrayLeftMouseDown;
-        _taskbarIcon.ContextMenu = BuildContextMenu();
+        _contextMenu = BuildContextMenu();
+        _taskbarIcon.ContextMenu = _contextMenu;
 
         // ForceCreate 会同时处理 Explorer 重启后的图标恢复。
         _taskbarIcon.ForceCreate();
@@ -115,6 +119,39 @@ public sealed class TrayIconService : IDisposable
         }
     }
 
+    /// <summary>
+    /// 更新右键菜单里的“设备电量”段。传入 <paramref name="enabled"/> 为 false
+    /// 或条目为空时整段（含分隔线）不显示；内容未变时不重建菜单项。
+    /// </summary>
+    public void SetDeviceBatteryMenu(bool enabled, IReadOnlyList<string> headers)
+    {
+        ArgumentNullException.ThrowIfNull(headers);
+
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!_taskbarIcon.Dispatcher.CheckAccess())
+        {
+            _taskbarIcon.Dispatcher.BeginInvoke(
+                new Action(() => SetDeviceBatteryMenu(enabled, headers)));
+            return;
+        }
+
+        var desired = enabled
+            ? headers.Take(TrayMenuBuilder.MaxDevices).ToList()
+            : new List<string>();
+
+        if (desired.SequenceEqual(_batteryHeaders))
+        {
+            return;
+        }
+
+        _batteryHeaders = desired;
+        RebuildBatterySection();
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -136,6 +173,55 @@ public sealed class TrayIconService : IDisposable
         {
             AppLog.Warn("释放托盘图标时出错", "Tray", ex);
         }
+    }
+
+    private void RebuildBatterySection()
+    {
+        var menu = _contextMenu;
+        if (menu is null)
+        {
+            return;
+        }
+
+        foreach (var element in _batterySection)
+        {
+            menu.Items.Remove(element);
+        }
+
+        _batterySection.Clear();
+
+        if (_batteryHeaders.Count == 0)
+        {
+            return;
+        }
+
+        var section = new List<UIElement>
+        {
+            new Separator(),
+            new MenuItem
+            {
+                Header = TrayMenuBuilder.SectionTitle,
+                FontWeight = FontWeights.SemiBold,
+                IsEnabled = false,
+            },
+        };
+
+        foreach (var header in _batteryHeaders)
+        {
+            // 只读展示：不可点击，避免用户误以为能从这里操作设备。
+            section.Add(new MenuItem { Header = header, IsEnabled = false });
+        }
+
+        var insertAt = _refreshItem is null
+            ? 0
+            : menu.Items.IndexOf(_refreshItem) + 1;
+
+        for (var index = 0; index < section.Count; index++)
+        {
+            menu.Items.Insert(insertAt + index, section[index]);
+        }
+
+        _batterySection.AddRange(section);
     }
 
     private ContextMenu BuildContextMenu()

@@ -379,6 +379,12 @@
                                      Content="低电量时弹出托盘气泡"
                                      Unchecked="OnNotificationsToggled" />
 
+                    <ui:ToggleSwitch x:Name="TrayBatteryMenuSwitch"
+                                     Margin="0,10,0,0"
+                                     Checked="OnTrayBatteryMenuToggled"
+                                     Content="在任务栏右键菜单显示设备电量（最多 3 个）"
+                                     Unchecked="OnTrayBatteryMenuToggled" />
+
                     <ui:ToggleSwitch x:Name="GattSwitch"
                                      Margin="0,10,0,0"
                                      Checked="OnGattToggled"

@@ -108,6 +108,7 @@ public partial class App : Application
         _mainWindow.SettingsEditRequested += OnSettingsEditRequested;
         _mainWindow.ApplySettings(_settingsService.Current);
         _mainWindow.SetGlobalStatus("正在读取已配对设备与 2.4G 接收器…");
+        UpdateTrayBatteryMenu();
 
         if (_settingsService.Current.StartMinimized)
         {
@@ -204,6 +205,7 @@ public partial class App : Application
         IReadOnlyList<DeviceBatterySnapshot> snapshots)
     {
         _mainWindow?.QueueDevicesUpdate(snapshots);
+        UpdateTrayBatteryMenu();
 
         var hasHid24G = snapshots.Any(
             snapshot => snapshot.Transport == DeviceTransportKind.Hid24G);
@@ -277,6 +279,27 @@ public partial class App : Application
         }
 
         _mainWindow?.ApplySettings(service.Current);
+        UpdateTrayBatteryMenu();
+    }
+
+    /// <summary>
+    /// 重建托盘右键菜单的“设备电量”段：设置关闭或没有可读电量时整段隐藏，
+    /// 最多展示 3 台，顺序与条目文案由 <see cref="TrayMenuBuilder"/> 统一决定。
+    /// </summary>
+    private void UpdateTrayBatteryMenu()
+    {
+        var settings = _settingsService?.Current;
+        if (settings is null)
+        {
+            return;
+        }
+
+        var devices = _deviceBatteryService?.Current;
+        var entries = devices is null
+            ? Array.Empty<string>()
+            : TrayMenuBuilder.Build(devices, settings.LowBatteryThreshold);
+
+        _trayIconService?.SetDeviceBatteryMenu(settings.ShowBatteryInTrayMenu, entries);
     }
 
     private void OnExitRequested(object? sender, EventArgs e)

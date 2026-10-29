@@ -11,6 +11,7 @@
 - 新增页面状态：首轮扫描进度环、空状态（含“打开蓝牙设置”）、全部不可达状态（提示检查蓝牙开关与设备电源，并提供“立即刷新”）、扫描失败 InfoBar（非阻塞提示 + “重试”，下一轮恢复后自动收起）、窗口隐藏时暂停的 30 秒相对时间刷新；快捷键 `F5` 刷新、`Ctrl+,` 切换设置、`Esc` 先收设置再隐藏。
 - 新增 `BatteryLevel`、`DeviceCategory` 模型与类别图标转换器：按名称关键词选择鼠标/键盘/耳机/手柄/手机图标。
 - 列表行键盘焦点：每行可 Tab 聚焦，`↑` / `↓` 在行间移动、`Home` / `End` 跳首尾，聚焦时显示 2px 强调色描边（自绘 `FocusVisualStyle`）；行仍不可选中，Enter/Space 无操作。
+- 托盘右键菜单新增“设备电量”段：按电量升序列出最多 3 台有读数的设备，文案为 `{设备名} · {电量}%`，低电量追加 `· 电量低`、旧值追加 `· 旧值`；新增 `TrayMenuBuilder` 统一选设备与文案。设置面板新增“在任务栏右键菜单显示设备电量”开关（`ShowBatteryInTrayMenu`，默认开），关闭或没有可读电量时整段（含分隔线）隐藏。
 
 ### Changed
 
@@ -30,7 +31,8 @@
 
 ### Notes
 
-- `DeviceListProjectorTests` 的排序断言按新分组规则更新；新增 `DeviceCategoryClassifierTests` 覆盖协议与名称两条判定路径；新增 `MainViewModelTests` 覆盖“全部不可达”状态判断、刷新中不闪烁与扫描失败状态映射（12 个用例）；新增 `K98RetrySchedule` 冷启动计划与“首轮失败不提示唤醒”的用例；`dotnet test` 共 91 个用例全部通过。
+- 托盘“设备电量”段每轮扫描结束后重建；条目文案未变化时不重建，避免菜单抖动。条目为只读信息项（`IsEnabled=false`），点击不执行动作，完整列表仍在主窗口。
+- `DeviceListProjectorTests` 的排序断言按新分组规则更新；新增 `DeviceCategoryClassifierTests` 覆盖协议与名称两条判定路径；新增 `MainViewModelTests` 覆盖“全部不可达”状态判断、刷新中不闪烁与扫描失败状态映射（12 个用例）；新增 `K98RetrySchedule` 冷启动计划与“首轮失败不提示唤醒”的用例；新增 `TrayMenuBuilderTests` 覆盖空读数、低电量/旧值标注、最多 3 台与超长设备名截断（6 个用例）；`dotnet test` 共 97 个用例全部通过。
 
 ## [0.4.3] - 2026-10-28
 
