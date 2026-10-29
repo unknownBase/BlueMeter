@@ -1,6 +1,5 @@
 ﻿using System.ComponentModel;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -19,8 +18,6 @@ public partial class MainWindow : FluentWindow
 {
     private bool _allowClose;
     private IReadOnlyList<DeviceBatterySnapshot>? _pendingSnapshots;
-    private AppSettings? _settings;
-    private bool _suppressSettingEvents;
     private bool _themeWatched = true;
     private int _deviceUpdatesScheduled;
 
@@ -34,10 +31,7 @@ public partial class MainWindow : FluentWindow
         ViewModel.HideToTrayRequested += OnHideToTrayRequested;
         ViewModel.OpenLogDirectoryRequested += OnOpenLogDirectoryRequested;
         ViewModel.OpenBluetoothSettingsRequested += OnOpenBluetoothSettingsRequested;
-
-        PopulateNumbers(LowThresholdBox, AppSettings.MinLowBatteryThreshold, AppSettings.MaxLowBatteryThreshold);
-        PopulateUnits(RefreshIntervalUnitBox);
-        ApplySettings(new AppSettings());
+        Settings.EditRequested += OnSettingsEditRequested;
 
         SystemThemeWatcher.Watch(this);
         IsVisibleChanged += OnWindowIsVisibleChanged;
@@ -49,6 +43,9 @@ public partial class MainWindow : FluentWindow
     public event EventHandler<Action<AppSettings>>? SettingsEditRequested;
 
     public MainViewModel ViewModel { get; }
+
+    /// <summary>设置面板 ViewModel；控件值的同步与编辑提交都在这里。</summary>
+    public SettingsViewModel Settings => ViewModel.Settings;
 
     /// <summary>设置文件路径，仅用于在设置面板里提示保存位置。</summary>
     public string? SettingsFilePath { get; set; }
@@ -70,9 +67,8 @@ public partial class MainWindow : FluentWindow
             return;
         }
 
-        _settings = settings.Clone();
         ViewModel.ApplySettings(settings);
-        BindSettings();
+        Settings.ApplySettings(settings, SettingsFilePath);
     }
 
     public void ShowAndActivate()
@@ -200,233 +196,8 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private void BindSettings()
-    {
-        var settings = _settings ?? new AppSettings();
-        _suppressSettingEvents = true;
-        try
-        {
-            var interval = RefreshIntervalConverter.FromSeconds(settings.RefreshIntervalSeconds);
-            RefreshIntervalInput.Text = interval.Value.ToString(CultureInfo.CurrentCulture);
-            SelectUnit(interval.Unit);
-            SelectNumber(LowThresholdBox, settings.LowBatteryThreshold, " %");
-            NotificationsSwitch.IsChecked = settings.LowBatteryNotificationsEnabled;
-            TrayBatteryMenuSwitch.IsChecked = settings.ShowBatteryInTrayMenu;
-            GattSwitch.IsChecked = settings.UseGattNotifications;
-            ShowUnsupportedSwitch.IsChecked = settings.ShowUnsupportedDevices;
-            RunAtStartupSwitch.IsChecked = settings.RunAtStartup;
-            StartMinimizedSwitch.IsChecked = settings.StartMinimized;
-            SettingsPathText.Text = string.IsNullOrWhiteSpace(SettingsFilePath)
-                ? "修改会立即生效并自动保存"
-                : $"修改会立即生效，保存在 {SettingsFilePath}";
-        }
-        finally
-        {
-            _suppressSettingEvents = false;
-        }
-    }
-
-    private static void PopulateNumbers(ComboBox box, int min, int max)
-    {
-        for (var value = min; value <= max; value += 5)
-        {
-            box.Items.Add(new NumberOption(value));
-        }
-    }
-
-    private static void PopulateUnits(ComboBox box)
-    {
-        foreach (var unit in new[]
-                 {
-                     RefreshIntervalUnit.Seconds,
-                     RefreshIntervalUnit.Minutes,
-                     RefreshIntervalUnit.Hours,
-                 })
-        {
-            box.Items.Add(new UnitOption(unit));
-        }
-    }
-
-    private void SelectUnit(RefreshIntervalUnit unit)
-    {
-        var option = RefreshIntervalUnitBox.Items
-            .OfType<UnitOption>()
-            .FirstOrDefault(item => item.Unit == unit);
-
-        if (option is null)
-        {
-            option = new UnitOption(unit);
-            RefreshIntervalUnitBox.Items.Add(option);
-        }
-
-        RefreshIntervalUnitBox.SelectedItem = option;
-    }
-
-    private static void SelectNumber(ComboBox box, int value, string unit)
-    {
-        var option = box.Items
-            .OfType<NumberOption>()
-            .FirstOrDefault(item => item.Value == value);
-
-        if (option is null)
-        {
-            // 手工编辑过的设置可能不是 5 的倍数，补一个条目以免下拉框空白。
-            option = new NumberOption(value, unit);
-            box.Items.Add(option);
-        }
-
-        box.SelectedItem = option;
-    }
-
-    private void RaiseSettingsEdit(Action<AppSettings> edit)
-    {
+    private void OnSettingsEditRequested(object? sender, Action<AppSettings> edit) =>
         SettingsEditRequested?.Invoke(this, edit);
-    }
-
-    private void OnRefreshIntervalEdited(object sender, RoutedEventArgs e)
-    {
-        CommitRefreshInterval();
-    }
-
-    private void OnRefreshIntervalKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter)
-        {
-            CommitRefreshInterval();
-            e.Handled = true;
-        }
-    }
-
-    private void OnRefreshIntervalUnitChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressSettingEvents || _settings is null)
-        {
-            return;
-        }
-
-        // 切换单位时，按新单位解释当前数字（例如 45 秒 → 45 分钟），再即时保存。
-        CommitRefreshInterval();
-    }
-
-    /// <summary>
-    /// 把“数字 + 单位”换算成秒数并交给 App 保存；非法输入或超范围时回显边界值。
-    /// </summary>
-    private void CommitRefreshInterval()
-    {
-        if (_suppressSettingEvents || _settings is null ||
-            RefreshIntervalUnitBox.SelectedItem is not UnitOption unit)
-        {
-            return;
-        }
-
-        if (!int.TryParse(RefreshIntervalInput.Text.Trim(), NumberStyles.Integer, CultureInfo.CurrentCulture, out var value) ||
-            value <= 0)
-        {
-            BindSettings();
-            return;
-        }
-
-        var seconds = Math.Clamp(
-            RefreshIntervalConverter.ToSeconds(value, unit.Unit),
-            AppSettings.MinRefreshIntervalSeconds,
-            AppSettings.MaxRefreshIntervalSeconds);
-
-        var display = RefreshIntervalConverter.FromSeconds(seconds);
-        _suppressSettingEvents = true;
-        try
-        {
-            RefreshIntervalInput.Text = display.Value.ToString(CultureInfo.CurrentCulture);
-            SelectUnit(display.Unit);
-        }
-        finally
-        {
-            _suppressSettingEvents = false;
-        }
-
-        if (seconds == _settings.RefreshIntervalSeconds)
-        {
-            return;
-        }
-
-        RaiseSettingsEdit(settings => settings.RefreshIntervalSeconds = seconds);
-    }
-
-    private void OnLowThresholdChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressSettingEvents || _settings is null ||
-            LowThresholdBox.SelectedItem is not NumberOption option)
-        {
-            return;
-        }
-
-        RaiseSettingsEdit(settings => settings.LowBatteryThreshold = option.Value);
-    }
-
-    private void OnNotificationsToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingEvents || _settings is null)
-        {
-            return;
-        }
-
-        var enabled = NotificationsSwitch.IsChecked == true;
-        RaiseSettingsEdit(settings => settings.LowBatteryNotificationsEnabled = enabled);
-    }
-
-    private void OnTrayBatteryMenuToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingEvents || _settings is null)
-        {
-            return;
-        }
-
-        var enabled = TrayBatteryMenuSwitch.IsChecked == true;
-        RaiseSettingsEdit(settings => settings.ShowBatteryInTrayMenu = enabled);
-    }
-
-    private void OnGattToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingEvents || _settings is null)
-        {
-            return;
-        }
-
-        var enabled = GattSwitch.IsChecked == true;
-        RaiseSettingsEdit(settings => settings.UseGattNotifications = enabled);
-    }
-
-    private void OnShowUnsupportedToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingEvents || _settings is null)
-        {
-            return;
-        }
-
-        var enabled = ShowUnsupportedSwitch.IsChecked == true;
-        RaiseSettingsEdit(settings => settings.ShowUnsupportedDevices = enabled);
-    }
-
-    private void OnRunAtStartupToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingEvents || _settings is null)
-        {
-            return;
-        }
-
-        var enabled = RunAtStartupSwitch.IsChecked == true;
-        RaiseSettingsEdit(settings => settings.RunAtStartup = enabled);
-    }
-
-    private void OnStartMinimizedToggled(object sender, RoutedEventArgs e)
-    {
-        if (_suppressSettingEvents || _settings is null)
-        {
-            return;
-        }
-
-        var enabled = StartMinimizedSwitch.IsChecked == true;
-        RaiseSettingsEdit(settings => settings.StartMinimized = enabled);
-    }
 
     /// <summary>Esc 先收起设置面板，再隐藏窗口；F5 立即刷新；Ctrl+, 切换设置面板。</summary>
     private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
@@ -580,17 +351,5 @@ public partial class MainWindow : FluentWindow
         {
             AppLog.Warn("打开系统蓝牙设置失败", "Window", ex);
         }
-    }
-
-    /// <summary>下拉框条目：数值即设置值，文本带单位。</summary>
-    private sealed record NumberOption(int Value, string Unit = "")
-    {
-        public override string ToString() => $"{Value}{Unit}";
-    }
-
-    /// <summary>刷新间隔单位下拉框条目。</summary>
-    private sealed record UnitOption(RefreshIntervalUnit Unit)
-    {
-        public override string ToString() => RefreshIntervalConverter.UnitText(Unit);
     }
 }

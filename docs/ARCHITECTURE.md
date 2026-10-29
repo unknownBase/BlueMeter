@@ -90,6 +90,8 @@ BlueMeter 不访问网络，不启动后台服务，不安装驱动。
 | `TrayIconService` | 创建/释放 `TaskbarIcon`、菜单（含设备电量段）、左键还原、ToolTip、气泡 | 电量读取 |
 | `MainWindow` | Fluent 外壳、关闭隐藏、最小化策略 | 枚举设备 |
 | `MainViewModel` | 设备集合、排序、汇总、命令、设置绑定 | 直接调用 WinRT |
+| `SettingsViewModel` | 设置面板控件值同步、间隔数值/单位换算与校验、编辑事件 | 保存、注册表写入、窗口与布局 |
+| `SettingsPanel` | 设置面板视图（UserControl）：控件与绑定 | 保存与外部副作用 |
 | `DeviceBatteryService` | 生命周期、刷新循环与轮次编排、事件发布、失败日志 | 枚举细节、状态字段维护、窗口/托盘 UI |
 | `BluetoothDeviceEnumerator` | BLE/经典蓝牙枚举、系统属性解析、按地址去重合并、适配器与无线电状态探测 | GATT 连接与读取、状态存储 |
 | `BatteryStateStore` | 设备条目与读数状态、增删去重、探针结果应用、低电量判定、快照生成 | 枚举与读取、事件发布、调度 |
@@ -164,10 +166,12 @@ BlueMeter/
 │  ├─ ObservableObject.cs
 │  ├─ RelayCommand.cs
 │  ├─ MainViewModel.cs
+│  ├─ SettingsViewModel.cs
 │  ├─ DeviceListProjector.cs
 │  └─ DeviceItemViewModel.cs
 ├─ Controls/                     namespace BlueMeter.Controls
-│  └─ BatteryBar.xaml(.cs)
+│  ├─ BatteryBar.xaml(.cs)
+│  └─ SettingsPanel.xaml(.cs)
 ├─ Converters/                   namespace BlueMeter.Converters
 │  └─ DeviceCategoryToSymbolConverter.cs
 └─ Assets/BlueMeter.ico
@@ -831,12 +835,14 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
 
 ### 13.1 托盘右键菜单“设备电量”段
 
-菜单固定项为“显示主窗口 / 立即刷新 / 退出”，中间可插入只读的“设备电量”分组：
+菜单固定项为“显示主窗口 / 立即刷新 / 退出”，中间可插入“设备电量”分组（分组标题不可点击，设备条目可点击打开主窗口）：
 
 - `TrayMenuBuilder` 是唯一来源：只取有读数的设备，按电量升序取前 3 台；文案为 `{设备名} · {电量}%`，低电量追加 `· 电量低`、`Stale`/`Unavailable` 追加 `· 旧值`，设备名超过 18 字符截断。
 - `App` 在 `DevicesUpdated` 与设置变更后调用 `UpdateTrayBatteryMenu()`，把设置 `ShowBatteryInTrayMenu` 与条目一起交给 `TrayIconService.SetDeviceBatteryMenu`。
-- 条目与分组标题均为 `IsEnabled=false` 的只读菜单项，点击不执行动作；关闭设置或没有可读电量时，分组标题与分隔线一并移除。
-- 条目文案未变化时不重建菜单项；菜单结构只在 UI 线程变更，后台线程由 `TaskbarIcon.Dispatcher` 编组。
+- 分组标题不可点击；设备条目可点击，点击后通过 `ShowRequested` 打开并激活主窗口；托盘气泡点击（`TrayBalloonTipClicked`）也走同一入口。
+- 刷新期间标题显示 `设备电量 · 正在刷新…`，条目保留上一轮读数；条目文案未变化时不重建菜单项。
+- 关闭设置或没有可读电量时，分组标题与分隔线一并移除。
+- 菜单结构只在 UI 线程变更，后台线程由 `TaskbarIcon.Dispatcher` 编组。
 
 ---
 
@@ -899,25 +905,28 @@ Windows `NOTIFYICONDATA.szTip` 为 128 个 `WCHAR`（含结尾 `\0`），实际�
   "useGattNotifications": true,
   "startMinimized": false,
   "runAtStartup": false,
-  "showUnsupportedDevices": true
+  "showUnsupportedDevices": true,
+  "showBatteryInTrayMenu": true
 }
 ```
 
 | 字段 | 默认 | 校验 |
 | --- | --- | --- |
-| `refreshIntervalSeconds` | 45 | 30–60 |
+| `refreshIntervalSeconds` | 45 | 10–86400；界面按秒/分钟/小时输入 |
 | `lowBatteryThreshold` | 20 | 5–50 |
 | `lowBatteryNotificationsEnabled` | true | 系统通知关闭时仍保留此偏好 |
 | `useGattNotifications` | true | false = 纯轮询 |
 | `startMinimized` | false | 启动不显示主窗口 |
-| `runAtStartup` | false | 可选；未实现开机启动时隐藏此项 |
+| `runAtStartup` | false | 写入 HKCU Run；写入失败时回滚 |
 | `showUnsupportedDevices` | true | false 时列表隐藏 `NotSupported` 设备 |
+| `showBatteryInTrayMenu` | true | false 时托盘菜单不显示设备电量段 |
 
 行为：
 
 - 加载失败 → 重命名为 `settings.json.bak-{timestamp}`，使用默认值。
 - 保存使用临时文件 + `File.Replace`/`File.Move(overwrite)`，避免半写。
 - 设置变更事件 → 服务更新间隔/阈值，无需重启；托盘与 UI 立即刷新。
+- 编辑链路：`SettingsPanel` → `SettingsViewModel.EditRequested` → `MainWindow.SettingsEditRequested` → `App` 调 `SettingsService.Update` 保存并回写；保存/注册表失败时回滚到旧值并弹托盘提示。
 - 未知字段忽略；缺失字段用默认值；数值越界钳制。
 - 不把设置写入注册表（开机启动键除外）。
 

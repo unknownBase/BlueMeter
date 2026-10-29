@@ -12,7 +12,11 @@ public static class TrayMenuBuilder
     /// <summary>托盘菜单最多展示的设备数，其余设备由主窗口查看。</summary>
     public const int MaxDevices = 3;
 
-    public const string SectionTitle = "设备电量";
+    public const string SectionTitleText = "设备电量";
+
+    /// <summary>分组标题；刷新中在标题里同步状态，避免用户误把旧值当本轮结果。</summary>
+    public static string SectionTitle(bool refreshing) =>
+        refreshing ? $"{SectionTitleText} · 正在刷新…" : SectionTitleText;
 
     private const int MaxDeviceNameLength = 18;
 

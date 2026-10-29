@@ -81,6 +81,13 @@ public sealed class TrayMenuBuilderTests
         Assert.True(text.Length < 60, $"length={text.Length}");
     }
 
+    [Fact]
+    public void SectionTitle_ReflectsRefreshState()
+    {
+        Assert.Equal("设备电量", TrayMenuBuilder.SectionTitle(refreshing: false));
+        Assert.Equal("设备电量 · 正在刷新…", TrayMenuBuilder.SectionTitle(refreshing: true));
+    }
+
     private static DeviceBatterySnapshot Snapshot(
         string name,
         int? percent,

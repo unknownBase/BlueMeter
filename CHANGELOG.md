@@ -12,9 +12,12 @@
 - 新增 `BatteryLevel`、`DeviceCategory` 模型与类别图标转换器：按名称关键词选择鼠标/键盘/耳机/手柄/手机图标。
 - 列表行键盘焦点：每行可 Tab 聚焦，`↑` / `↓` 在行间移动、`Home` / `End` 跳首尾，聚焦时显示 2px 强调色描边（自绘 `FocusVisualStyle`）；行仍不可选中，Enter/Space 无操作。
 - 托盘右键菜单新增“设备电量”段：按电量升序列出最多 3 台有读数的设备，文案为 `{设备名} · {电量}%`，低电量追加 `· 电量低`、旧值追加 `· 旧值`；新增 `TrayMenuBuilder` 统一选设备与文案。设置面板新增“在任务栏右键菜单显示设备电量”开关（`ShowBatteryInTrayMenu`，默认开），关闭或没有可读电量时整段（含分隔线）隐藏。
+- 托盘交互：设备条目改为可点击，点击后打开并激活主窗口（悬停提示“打开主窗口查看全部设备”）；托盘气泡（含低电量提醒）点击也可回到主窗口；刷新期间“设备电量”标题显示“正在刷新…”，条目保留上一轮读数。
+- 设置面板抽成 `Controls/SettingsPanel` 用户控件 + `ViewModels/SettingsViewModel`：控件值同步、刷新间隔“数值 + 单位”换算与校验、编辑事件都可由单元测试覆盖；`MainViewModel` 持有 `Settings`，`MainWindow` 只做转发。
 
 ### Changed
 
+- 设置面板逻辑从 `MainWindow` 拆出：`BindSettings`、各开关 `Toggled` / 下拉 `SelectionChanged` 处理与下拉条目记录类全部移除，改由 `SettingsViewModel` 负责值同步、单位换算与编辑事件，`SettingsPanel` 只承载视图；保存、回滚与开机启动注册表副作用仍在 `App`，行为不变。
 - 整轮扫描失败（蓝牙与 2.4G 枚举都失败，或轮次内出现未捕获异常）改用 `StatusChanged(DeviceServiceState.Error)` 携带面向用户的文案，不新增扫描失败专用事件；每轮枚举结果会重新发布状态，失败提示随下一轮恢复自动收起。
 - 设备行模型升级为可原地更新的正式行：同一设备复用同一对象，刷新只改属性并重排位置，避免列表闪烁。
 - 列表排序改为低电量 → 警告区 → 正常 → 暂时不可达 → 其余，同组内按电量升序、再按名称。
@@ -31,8 +34,8 @@
 
 ### Notes
 
-- 托盘“设备电量”段每轮扫描结束后重建；条目文案未变化时不重建，避免菜单抖动。条目为只读信息项（`IsEnabled=false`），点击不执行动作，完整列表仍在主窗口。
-- `DeviceListProjectorTests` 的排序断言按新分组规则更新；新增 `DeviceCategoryClassifierTests` 覆盖协议与名称两条判定路径；新增 `MainViewModelTests` 覆盖“全部不可达”状态判断、刷新中不闪烁与扫描失败状态映射（12 个用例）；新增 `K98RetrySchedule` 冷启动计划与“首轮失败不提示唤醒”的用例；新增 `TrayMenuBuilderTests` 覆盖空读数、低电量/旧值标注、最多 3 台与超长设备名截断（6 个用例）；`dotnet test` 共 97 个用例全部通过。
+- 托盘“设备电量”段每轮扫描结束后重建；条目文案未变化时不重建，避免菜单抖动。条目可点击，与托盘气泡一同作为“打开主窗口”的入口；刷新期间标题追加“· 正在刷新…”，条目保留上一轮读数，完整列表仍在主窗口。
+- `DeviceListProjectorTests` 的排序断言按新分组规则更新；新增 `DeviceCategoryClassifierTests` 覆盖协议与名称两条判定路径；新增 `MainViewModelTests` 覆盖“全部不可达”状态判断、刷新中不闪烁与扫描失败状态映射（12 个用例）；新增 `K98RetrySchedule` 冷启动计划与“首轮失败不提示唤醒”的用例；新增 `TrayMenuBuilderTests` 覆盖空读数、低电量/旧值标注、最多 3 台、超长设备名截断与刷新标题（7 个用例）；新增 `SettingsViewModelTests` 覆盖绑定不回发、非 5 倍数阈值、间隔单位换算、上限钳制、非法输入回显与未变更不保存（8 个用例）；`dotnet test` 共 106 个用例全部通过。
 
 ## [0.4.3] - 2026-10-28
 

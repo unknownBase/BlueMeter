@@ -17,7 +17,9 @@ public sealed class TrayIconService : IDisposable
     private readonly List<UIElement> _batterySection = new();
     private ContextMenu? _contextMenu;
     private MenuItem? _refreshItem;
+    private MenuItem? _batteryTitleItem;
     private List<string> _batteryHeaders = new();
+    private bool _refreshBusy;
     private bool _disposed;
 
     public TrayIconService()
@@ -33,6 +35,7 @@ public sealed class TrayIconService : IDisposable
 
         _taskbarIcon.TrayLeftMouseDown += OnTrayLeftMouseDown;
         _taskbarIcon.TrayMouseDoubleClick += OnTrayLeftMouseDown;
+        _taskbarIcon.TrayBalloonTipClicked += OnTrayBalloonTipClicked;
         _contextMenu = BuildContextMenu();
         _taskbarIcon.ContextMenu = _contextMenu;
 
@@ -91,6 +94,12 @@ public sealed class TrayIconService : IDisposable
 
         _refreshItem.Header = busy ? "正在刷新…" : "立即刷新";
         _refreshItem.IsEnabled = !busy;
+
+        _refreshBusy = busy;
+        if (_batteryTitleItem is not null)
+        {
+            _batteryTitleItem.Header = TrayMenuBuilder.SectionTitle(busy);
+        }
     }
 
     public void ShowNotification(string message)
@@ -165,6 +174,7 @@ public sealed class TrayIconService : IDisposable
         {
             _taskbarIcon.TrayLeftMouseDown -= OnTrayLeftMouseDown;
             _taskbarIcon.TrayMouseDoubleClick -= OnTrayLeftMouseDown;
+            _taskbarIcon.TrayBalloonTipClicked -= OnTrayBalloonTipClicked;
             _taskbarIcon.ContextMenu = null;
             _taskbarIcon.Dispose();
             AppLog.Info("托盘图标已释放", "Tray");
@@ -189,27 +199,36 @@ public sealed class TrayIconService : IDisposable
         }
 
         _batterySection.Clear();
+        _batteryTitleItem = null;
 
         if (_batteryHeaders.Count == 0)
         {
             return;
         }
 
+        var titleItem = new MenuItem
+        {
+            Header = TrayMenuBuilder.SectionTitle(_refreshBusy),
+            FontWeight = FontWeights.SemiBold,
+            IsEnabled = false,
+        };
+        _batteryTitleItem = titleItem;
+
         var section = new List<UIElement>
         {
             new Separator(),
-            new MenuItem
-            {
-                Header = TrayMenuBuilder.SectionTitle,
-                FontWeight = FontWeights.SemiBold,
-                IsEnabled = false,
-            },
+            titleItem,
         };
 
         foreach (var header in _batteryHeaders)
         {
-            // 只读展示：不可点击，避免用户误以为能从这里操作设备。
-            section.Add(new MenuItem { Header = header, IsEnabled = false });
+            var item = new MenuItem
+            {
+                Header = header,
+                ToolTip = "打开主窗口查看全部设备",
+            };
+            item.Click += OnBatteryItemClick;
+            section.Add(item);
         }
 
         var insertAt = _refreshItem is null
@@ -262,6 +281,18 @@ public sealed class TrayIconService : IDisposable
     }
 
     private void OnTrayLeftMouseDown(object? sender, RoutedEventArgs e)
+    {
+        ShowRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>点击托盘气泡（含低电量提醒）回到主窗口。</summary>
+    private void OnTrayBalloonTipClicked(object? sender, RoutedEventArgs e)
+    {
+        ShowRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>菜单里的设备条目只用于跳转，具体信息在主窗口查看。</summary>
+    private void OnBatteryItemClick(object? sender, RoutedEventArgs e)
     {
         ShowRequested?.Invoke(this, EventArgs.Empty);
     }

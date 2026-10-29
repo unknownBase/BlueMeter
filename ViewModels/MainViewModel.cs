@@ -77,6 +77,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public ReadOnlyObservableCollection<DeviceItemViewModel> Devices => _devicesView;
 
+    /// <summary>设置面板 ViewModel；控件值同步与编辑提交都在这里。</summary>
+    public SettingsViewModel Settings { get; } = new();
+
     public RelayCommand RefreshCommand { get; }
 
     public RelayCommand ToggleSettingsCommand { get; }
